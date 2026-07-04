@@ -3,6 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#F6F1E4">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>371 — Chorale Analysis</title>
 <style>
   :root{
@@ -23,21 +29,25 @@
   #pick{font-family:var(--sans);font-size:11px;color:var(--ink);background:transparent;
         border:1px solid var(--rule);border-radius:4px;padding:2px 4px;max-width:44vw}
   .meta{display:flex;gap:14px;margin-top:2px;font-family:var(--sans);font-size:10.5px;
-        text-transform:uppercase;letter-spacing:.12em;color:var(--ink-soft)}
+        text-transform:uppercase;letter-spacing:.12em;color:var(--ink-soft);align-items:center}
   .meta b{color:var(--ink)}
-  .meta .sp{cursor:pointer;font-weight:400;color:var(--ink-soft);padding:0 2px}
-  .meta .sp.on{color:var(--ink);font-weight:700;text-decoration:underline}
+  #modebtn{cursor:pointer;color:var(--ink);font-weight:700;text-decoration:underline;
+           background:none;border:none;font:inherit;letter-spacing:inherit;
+           text-transform:inherit;padding:0}
+  #space{width:70px;accent-color:var(--ink);height:14px}
 
   /* ---- scroll region: staff + slots ---- */
   #scroller{flex:1 1 auto;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;
             position:relative;background:
             linear-gradient(var(--paper) 0%, var(--paper-deep) 100%)}
+  body.conveyor #scroller{touch-action:none}
   #content{position:relative;height:100%;min-width:100%}
   #staff{padding:8px 24px 0}
-  .svgvar{display:none}
-  .svgvar.on{display:block}
   #staff svg{height:min(46vh,300px);width:auto;display:block}
   #staff svg *{color:var(--ink)}
+  #loadmsg{position:absolute;top:40%;left:0;right:0;text-align:center;
+           font-family:var(--sans);font-size:12px;color:var(--ink-soft);
+           letter-spacing:.08em;text-transform:uppercase}
 
   #cursor{position:absolute;top:0;width:2px;background:var(--amber);
           box-shadow:0 0 0 6px var(--amber);pointer-events:none;display:none}
@@ -46,6 +56,7 @@
   .slot{position:absolute;transform:translateX(-50%);min-width:36px;height:64px;
         display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
         cursor:pointer;user-select:none;-webkit-user-select:none}
+  body.conveyor .slot{pointer-events:none}
   .slot .tick{width:1px;height:8px;background:var(--rule)}
   .slot .box{min-width:34px;padding:2px 5px;height:34px;display:flex;align-items:center;
         justify-content:center;border-bottom:1.5px solid var(--rule);font-size:17px;
@@ -85,6 +96,7 @@
   .prow button:disabled{opacity:.35;cursor:default}
   #secrow,#keyrow,#extrarow{display:none}
   #secrow.show,#keyrow.show,#extrarow.show{display:flex}
+  #dronebtn.droning{background:var(--amber)}
 
   /* ---- transport ---- */
   #transport{display:flex;align-items:center;gap:10px;margin-top:6px;
@@ -106,10 +118,10 @@
   </div>
   <div class="meta">
     <span>Key <b id="mkey">–</b></span>
-    <span>Phrases <b id="mphr">–</b></span>
     <span>Progress <b id="mprog">0/0</b></span>
-    <span style="margin-left:auto">Spacing
-      <b class="sp" data-l="0">tight</b><b class="sp" data-l="1">med</b><b class="sp" data-l="2">wide</b>
+    <span><button id="modebtn">conveyor</button></span>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:5px">Spacing
+      <input id="space" type="range" min="0" max="100" value="50">
     </span>
   </div>
   <div id="transport">
@@ -121,11 +133,8 @@
 
 <div id="scroller">
   <div id="content">
-    <div id="staff">
-      <div class="svgvar" data-l="0"></div>
-      <div class="svgvar" data-l="1"></div>
-      <div class="svgvar" data-l="2"></div>
-    </div>
+    <div id="staff"></div>
+    <div id="loadmsg">Loading engraver…</div>
     <div id="cursor"></div>
     <div id="slots"></div>
   </div>
@@ -173,11 +182,44 @@
   <div class="prow" id="keyrow"></div>
   <div class="prow">
     <button id="clearbtn" class="util">Clear</button>
+    <button id="dronebtn" class="util">&#9673; hold to hear</button>
     <button id="enterbtn" class="go util">Enter</button>
   </div>
 </div>
 
+<script src="vendor/verovio-toolkit-wasm.js"></script>
 <script>
+/* ============ engraving: client-side Verovio (Milestone 4) ============
+   The server no longer pre-renders SVGs; the app renders the bundled
+   MusicXML itself. Repeats are already stripped server-side (SPEC.md
+   pitfall 1). Slot mapping reimplements the shipped design (pitfall 3):
+   the raw-SVG notehead glyph ORIGINS pick WHICH element per onset
+   (leftmost voice, relative comparison only); the browser then measures
+   WHERE via getBoundingClientRect of that element's .notehead subgroup. */
+const vrvReady=new Promise(res=>{
+  if(window.verovio&&verovio.module.calledRun) res();
+  else verovio.module.onRuntimeInitialized=res;
+});
+let TK=null;
+async function toolkit(){
+  await vrvReady;
+  if(!TK) TK=new verovio.toolkit();
+  return TK;
+}
+/* continuous spacing: piecewise-linear through the three verified anchors
+   (SPEC.md pitfall 4: spacingLinear caps at 1.0, nonlinear dominates) */
+const ANCHORS=[[0.25,0.55],[0.40,0.58],[0.90,0.55]];   /* tight/med/wide */
+function spacingFor(t){                                 /* t in [0,1] */
+  const [a,b,f]=t<=.5?[ANCHORS[0],ANCHORS[1],t*2]:[ANCHORS[1],ANCHORS[2],(t-.5)*2];
+  return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f];
+}
+function vrvOptions(t){
+  const [lin,nonlin]=spacingFor(t);
+  return {breaks:'none',adjustPageHeight:true,adjustPageWidth:true,
+          pageWidth:60000,scale:42,footer:'none',header:'none',
+          spacingLinear:lin,spacingNonLinear:nonlin};
+}
+
 /* ============ figure parsing & canonical form (Milestone 3) ============
    canonFig() must stay in sync with canon_fig() in pipeline/build_chorale.py:
    both sides normalize to the same string before comparison against the
@@ -216,12 +258,16 @@ function rnHTML(p, keych){
 }
 
 /* ================= chorale loading ================= */
-let DATA=null, slots=[], level=1, sel=-1, attempts={}, results={};
+let DATA=null, slots=[], chosenIds=[], sel=-1, attempts={}, results={};
+let loadToken=0;
 const scroller=document.getElementById('scroller'),
       content=document.getElementById('content'),
+      staffEl=document.getElementById('staff'),
       slotsEl=document.getElementById('slots'),
       cursor=document.getElementById('cursor'),
-      pick=document.getElementById('pick');
+      loadmsg=document.getElementById('loadmsg'),
+      pick=document.getElementById('pick'),
+      spaceEl=document.getElementById('space');
 
 async function fetchBundle(riem){
   const url=`chorales/${String(riem).padStart(3,'0')}.json.gz`;
@@ -235,7 +281,38 @@ async function fetchBundle(riem){
   return JSON.parse(await st.text());
 }
 
+/* render (or re-space) the current chorale and rebuild the slot mapping */
+async function renderScore(reload){
+  const tk=await toolkit(), token=loadToken;
+  tk.setOptions(vrvOptions(+spaceEl.value/100));
+  if(reload) tk.loadData(DATA.musicxml);
+  else tk.redoLayout();
+  if(token!==loadToken) return;             /* superseded by another load */
+  const svg=tk.renderToSVG(1);
+  const tm=tk.renderToTimemap();
+  loadmsg.style.display='none';
+  staffEl.innerHTML=svg;
+  /* WHICH element per onset: leftmost notehead glyph origin (raw svg) */
+  const nx={};
+  for(const m of svg.matchAll(/<g id="([^"]+)" class="note">/g)){
+    const seg=svg.slice(m.index+m[0].length, m.index+m[0].length+800);
+    const hm=seg.match(/class="notehead">\s*<use[^>]*translate\((-?[\d.]+)/);
+    if(hm) nx[m[1]]=parseFloat(hm[1]);
+  }
+  const q2={};
+  for(const e of tm) if(e.on){
+    const q=Math.round(e.qstamp*1000)/1000;
+    (q2[q]=q2[q]||[]).push(...e.on);
+  }
+  chosenIds=DATA.events.map(ev=>{
+    const cands=(q2[ev.offset]||[]).filter(id=>id in nx);
+    return cands.length?cands.reduce((a,b)=>nx[a]<=nx[b]?a:b):null;
+  });
+  layout();
+}
+
 function setup(data){
+  loadToken++;
   stopPlayback(); stopDrone(true);
   DATA=data; sel=-1; attempts={}; results={};
   cursor.style.display='none';
@@ -246,7 +323,6 @@ function setup(data){
     e.keyChange=(prevKey!==null&&e.key!==prevKey)?e.key:null;
     prevKey=e.key;
   });
-  document.querySelectorAll('.svgvar').forEach((v,i)=>{v.innerHTML=DATA.svgs[i];});
   slotsEl.innerHTML=''; slots=[];
   DATA.events.forEach((e,i)=>{
     const d=document.createElement('div');
@@ -276,16 +352,18 @@ function setup(data){
   const k0=DATA.events[0].key;
   document.getElementById('mkey').textContent=
     k0.replace('-','♭')+(k0[0]===k0[0].toLowerCase()?' minor':' major');
-  document.getElementById('mphr').textContent=DATA.numPhrases;
   update(); resetState();
   msg('Select a chord slot to begin.');
   recomputeNotes();
   scroller.scrollLeft=0;
-  requestAnimationFrame(layout);
+  renderScore(true).then(()=>{
+    if(mode==='conveyor'){const n=firstUnanswered(); if(n>=0)select(n);}
+  });
 }
 
 async function loadChorale(riem){
   try{
+    loadmsg.textContent=`Loading chorale ${riem}…`; loadmsg.style.display='';
     const data=await fetchBundle(riem);
     setup(data);
     localStorage.setItem('riem',riem);
@@ -311,27 +389,61 @@ async function init(){
   await loadChorale(start);
 }
 
-/* ---------- layout: slots aligned to SVG note elements ---------- */
+/* ---------- layout: slots aligned to rendered note elements ----------
+   WHERE on screen: measure the chosen element's .notehead subgroup
+   (never the whole note group — lyrics/extenders skew it; pitfall 2). */
 function layout(){
   if(!DATA) return;
-  document.querySelectorAll('.svgvar').forEach(v=>v.classList.toggle('on',+v.dataset.l===level));
-  document.querySelectorAll('.sp').forEach(b=>b.classList.toggle('on',+b.dataset.l===level));
-  const svg=document.querySelector('.svgvar.on svg');
+  const svg=staffEl.querySelector('svg');
   if(!svg) return;
   const cRect=content.getBoundingClientRect(), sRect=svg.getBoundingClientRect();
+  let prevX=-Infinity, monotone=true;
   DATA.events.forEach((e,i)=>{
-    const nh=svg.querySelector('#'+CSS.escape(DATA.noteids[level][i])+' .notehead');
+    const id=chosenIds[i];
+    const nh=id&&svg.querySelector('#'+CSS.escape(id)+' .notehead');
     if(!nh) return;
     const r=nh.getBoundingClientRect();
     const x=r.left + r.width/2 - cRect.left;
     slots[i].style.left=x+'px';
     slots[i].dataset.x=x;
+    if(x<=prevX) monotone=false;
+    prevX=x;
   });
+  if(!monotone) console.warn('slot x not strictly increasing — alignment suspect');
   content.style.width=(sRect.width+240)+'px';
   if(sel>=0)cursor.style.left=slots[sel].dataset.x+'px';
 }
-document.querySelectorAll('.sp').forEach(b=>b.onclick=()=>{level=+b.dataset.l;layout();});
 window.addEventListener('resize',layout);
+
+/* continuous spacing slider: re-layout the SAME loaded score (debounced) */
+let spaceTimer=null;
+spaceEl.addEventListener('input',()=>{
+  clearTimeout(spaceTimer);
+  spaceTimer=setTimeout(()=>{
+    if(!DATA) return;
+    localStorage.setItem('space',spaceEl.value);
+    renderScore(false).then(()=>{
+      if(sel>=0)slots[sel].scrollIntoView({inline:'center',block:'nearest'});
+    });
+  },160);
+});
+spaceEl.value=localStorage.getItem('space')||'50';
+
+/* ---------- mode: conveyor (app owns advancement) vs browse ---------- */
+let mode=localStorage.getItem('mode')||
+         (matchMedia('(pointer:coarse)').matches?'conveyor':'browse');
+const modeBtn=document.getElementById('modebtn');
+function setMode(m){
+  mode=m; localStorage.setItem('mode',m);
+  document.body.classList.toggle('conveyor',m==='conveyor');
+  modeBtn.textContent=m;
+  if(m==='conveyor'&&DATA&&sel<0){const n=firstUnanswered(); if(n>=0)select(n);}
+}
+modeBtn.onclick=()=>setMode(mode==='conveyor'?'browse':'conveyor');
+function firstUnanswered(){
+  if(!DATA) return -1;
+  return DATA.events.findIndex((_,j)=>!(j in results));
+}
 
 /* ---------- entry state ---------- */
 const state={num:null,qual:'M',figs:'',sec:'',key:'',acc:'',maj:false};
@@ -377,6 +489,12 @@ function select(i){
   cursor.style.height=(slotsEl.offsetTop)+'px';
   slots[i].scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
 }
+function advance(){
+  const nxt=DATA.events.findIndex((_,j)=>j>sel&&!(j in results));
+  if(nxt>=0) select(nxt);
+  else if(firstUnanswered()>=0) select(firstUnanswered());
+  else {sel=-1;cursor.style.display='none';msg('Chorale complete.','ok');}
+}
 /* accepts matching: a.k === null -> the event's own key rule applies;
    a.k === ''   -> this reading is only right WITHOUT a key-change entry;
    a.k === 'X'  -> only right together with key-change X. */
@@ -403,8 +521,7 @@ function commit(){
     slots[sel].className='slot ok';
     box.innerHTML=rnHTML(e.ans, e.keyChange);
     msg('Correct.','ok'); update();
-    const nxt=DATA.events.findIndex((_,j)=>j>sel && !(j in results));
-    if(nxt>=0) setTimeout(()=>select(nxt),350); else {sel=-1;cursor.style.display='none';}
+    setTimeout(advance,350);
   }else{
     slots[sel].classList.add('bad');
     box.innerHTML=rnHTML(g, state.key||null);
@@ -412,8 +529,9 @@ function commit(){
       results[sel]=false; slots[sel].className='slot bad revealed';
       box.innerHTML=rnHTML(e.ans, e.keyChange);
       msg(`Answer: ${e.figure}${e.keyChange?' (in '+e.keyChange.replace('-','♭')+')':''}`,'bad'); update();
+      if(mode==='conveyor') setTimeout(advance,1100);
     }else{
-      msg('Not quite — one more try. Hold the slot to hear it again.','bad');
+      msg('Not quite — one more try. Hold to hear it again.','bad');
     }
   }
 }
@@ -575,7 +693,7 @@ function stopPlayback(){
     playMaster=null;
   }
   playBtn.innerHTML='&#9654;';playBtn.classList.remove('on');
-  if(sel>=0)cursor.style.left=slots[sel].dataset.x+'px';
+  if(sel>=0&&slots[sel])cursor.style.left=slots[sel].dataset.x+'px';
   else cursor.style.display='none';
 }
 playBtn.onclick=()=>playing?stopPlayback():startPlayback();
@@ -583,7 +701,7 @@ scroller.addEventListener('pointerdown',()=>{userHold=true;});
 scroller.addEventListener('pointerup',()=>{userHold=false;});
 scroller.addEventListener('pointercancel',()=>{userHold=false;});
 
-/* ---------- slot pointer handling: tap = select, hold = drone ---------- */
+/* ---------- slot pointer handling (browse): tap = select, hold = drone --- */
 function attachSlotHandlers(d,i){
   let timer=null,droning=false,startX=0,startY=0;
   d.addEventListener('pointerdown',ev=>{
@@ -606,6 +724,19 @@ function attachSlotHandlers(d,i){
   d.addEventListener('pointercancel',()=>{clearTimeout(timer);
     if(droning){stopDrone();d.classList.remove('droning');}});
 }
+
+/* ---------- dedicated drone hold-button (conveyor thumb zone) ---------- */
+const droneBtn=document.getElementById('dronebtn');
+droneBtn.addEventListener('pointerdown',()=>{
+  if(sel<0||!DATA) return;
+  droneBtn.classList.add('droning');
+  startDrone(DATA.events[sel].midi);
+});
+['pointerup','pointercancel','pointerleave'].forEach(evt=>
+  droneBtn.addEventListener(evt,()=>{
+    droneBtn.classList.remove('droning');
+    stopDrone();
+  }));
 
 /* ---------- palette wiring (bound once) ---------- */
 document.querySelectorAll('#numrow button').forEach(b=>b.onclick=()=>{state.num=b.dataset.n;paint();});
@@ -631,7 +762,9 @@ document.getElementById('clearbtn').onclick=resetState;
 document.getElementById('enterbtn').onclick=commit;
 
 /* ---------- init ---------- */
+setMode(mode);
 init();
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
 </body>
 </html>

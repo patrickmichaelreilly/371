@@ -24,9 +24,11 @@ cd When-in-Rome && git sparse-checkout set "Corpus/Early_Choral/Bach,_Johann_Seb
 PYTHONPATH=pipeline .venv/bin/python pipeline/build_corpus.py --jobs 8
 # -> build/report.md, build/report.json, build/NNN/{game_data.json,alternatives.json,sys*.svg}
 
-# package the site data (gzipped bundles + picker manifest)
+# package the site data (gzipped MusicXML+data bundles + picker manifest)
 .venv/bin/python pipeline/build_site.py
 # -> chorales/NNN.json.gz, chorales/index.json (committed; served by Pages)
+# the app renders client-side with vendor/verovio-toolkit-wasm.js (npm 6.2.0;
+# keep in lockstep with the pip verovio used by the pipeline)
 
 # local dev server (the app fetches chorales/ at runtime)
 python3 -m http.server 8000   # then open http://localhost:8000/

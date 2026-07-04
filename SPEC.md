@@ -168,12 +168,24 @@ Milestones 1-3 are built; see git history for details.
   vocabulary cross-check in the session test scripts) and matches against
   accepts. Palette gained b/#, Δ(maj), N, It6/Ger6/5/Fr4/3 and a dynamic
   per-chorale key row.
-- The app is now a fetch-based loader at /index.html with a chorale
-  picker. Chorale bundles ship as chorales/NNN.json.gz (game_data + three
-  SVGs, ~85 KB each) and are decompressed client-side with
-  DecompressionStream — raw SVGs would be ~250 MB per corpus rebuild in
-  git history; gzip keeps it ~30 MB. Milestone 4's client-side Verovio
-  makes the SVGs (and this compromise) go away entirely.
+- The app is a fetch-based loader at /index.html with a chorale picker.
+  Bundles are decompressed client-side with DecompressionStream.
+- **M4**: client-side Verovio (vendor/verovio-toolkit-wasm.js, npm 6.2.0
+  UMD ~6.7 MB / 2.2 MB gz, wasm embedded; server pipeline pins pip 6.2.1 —
+  keep the versions in lockstep when upgrading either). Bundles now carry
+  MusicXML instead of SVGs: whole corpus 2.3 MB. The app reimplements the
+  server slot-pick (leftmost notehead origin per timemap onset from the
+  raw SVG string, then DOM-measured .notehead center — pitfalls 2/3 still
+  apply) with a runtime strictly-increasing warning; verified in node with
+  the real toolkit across all 355 bundles x 3 spacings. NOTE: the JS
+  toolkit's renderToTimemap() returns an array, NOT a JSON string like the
+  Python binding. The three spacing levels became a continuous slider
+  (piecewise-linear through the tight/med/wide anchors). Conveyor mode
+  (default when pointer:coarse): app owns scrolling and advancement, slots
+  display-only, dedicated hold-to-hear button beside Enter, auto-advance
+  after reveal; browse mode keeps free navigation. PWA: manifest +
+  offline-first service worker (shell precached network-first; bundles
+  cache-first as visited).
 
 ## Manifest
 
@@ -184,6 +196,8 @@ Milestones 1-3 are built; see git history for details.
     pipeline/build_site.py      package chorales/NNN.json.gz + index.json
     index.html                  the app (loader + picker; single source)
     chorales/                   published bundles + manifest (committed)
+    vendor/                     verovio-toolkit-wasm.js (npm 6.2.0)
+    sw.js, manifest.webmanifest, icon-*.png   PWA shell
     reports/milestone1.md       verification report + triage
     data/game_data.json         riem 1 prototype-session reference output
     data/analysis_001.txt       reference copy of the When-in-Rome source

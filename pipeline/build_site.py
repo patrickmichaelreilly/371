@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 build_site.py -- package built chorales (build/NNN/) into the published
-site data: chorales/NNN.json.gz (game_data + the three spacing SVGs, gzipped
-for the repo; the app decompresses with DecompressionStream) and
-chorales/index.json (picker manifest).
+site data: chorales/NNN.json.gz (game_data + MusicXML, gzipped; the app
+renders client-side with Verovio WASM and decompresses the bundle with
+DecompressionStream) and chorales/index.json (picker manifest).
 
 Chorales are included per the Milestone 1 triage: build ok AND >=60%
 pitch-verified (see reports/milestone1.md).
@@ -31,7 +31,10 @@ def main():
             continue
         d = a.build / f"{r['riem']:03d}"
         data = json.loads((d / "game_data.json").read_text())
-        data["svgs"] = [(d / f"sys{i}.svg").read_text() for i in range(3)]
+        # client-side Verovio makes pre-rendered artifacts obsolete
+        data.pop("noteids", None)
+        data.pop("defaultLevel", None)
+        data["musicxml"] = (d / "score.musicxml").read_text()
         blob = gzip.compress(json.dumps(data).encode(), 9)
         (a.out / f"{r['riem']:03d}.json.gz").write_bytes(blob)
         manifest.append({"riem": r["riem"], "title": data["title"],
@@ -39,7 +42,7 @@ def main():
     (a.out / "index.json").write_text(json.dumps(manifest))
     total = sum(f.stat().st_size for f in a.out.glob("*.json.gz"))
     print(f"{len(manifest)} chorales -> {a.out}/ "
-          f"({total // (1 << 20)} MB gzipped), skipped {len(skipped)}: "
+          f"({total / (1 << 20):.1f} MB gzipped), skipped {len(skipped)}: "
           f"{skipped}")
 
 
