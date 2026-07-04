@@ -22,7 +22,7 @@ non-obvious Verovio/music21 behaviors documented there.
 import argparse, json, re, sys
 from pathlib import Path
 
-from music21 import corpus, converter, roman, expressions, bar
+from music21 import corpus, converter, roman, expressions, bar, interval, key
 import verovio
 
 SPACING_LEVELS = [(0.25, 0.55), (0.40, 0.58), (0.90, 0.55)]  # tight/medium/wide
@@ -115,19 +115,74 @@ def build(riem: int, wir_root: Path, out_dir: Path):
                 return i
         return max(len(fends) - 1, 0)
 
+    # ---- transposition detection ----
+    # Some When-in-Rome analyses follow an edition in a different key than
+    # the music21 corpus score (e.g. riem 17: score f#, analysis e). Detect
+    # the semitone shift that maximizes pitch verification; if it clearly
+    # beats shift 0, transpose the analysis KEYS to the score (figures are
+    # key-relative and unchanged).
+    offs = [round(float(rn.getOffsetInHierarchy(rntxt)), 3) for rn in rns]
+    wins = [pcs_during(offs[i], offs[i + 1] if i + 1 < len(rns)
+                       else offs[i] + 1.0) for i in range(len(rns))]
+    rnpcs = [{p.pitchClass for p in rn.pitches} for rn in rns]
+
+    def vfrac(shift):
+        return sum(not ({(x + shift) % 12 for x in rnpcs[i]} - wins[i])
+                   for i in range(len(rns))) / max(1, len(rns))
+
+    fracs = [vfrac(k) for k in range(12)]
+    shift = max(range(12), key=lambda k: fracs[k])
+    transposition = None
+    key_iv = None
+    if shift != 0 and fracs[shift] - fracs[0] > 0.3:
+        # pick the enharmonic spelling giving the simplest key names overall
+        tonic = rns[0].key.tonic
+        cands = []
+        for p in tonic.transpose(shift).getAllCommonEnharmonics() + \
+                 [tonic.transpose(shift)]:
+            if abs(p.alter) > 1:
+                continue
+            iv = interval.Interval(tonic, p)
+            cost = sum(abs(key.Key(rn.key.tonic.transpose(iv).name
+                                   if rn.key.mode == 'major' else
+                                   rn.key.tonic.transpose(iv).name.lower())
+                           .sharps) for rn in rns)
+            cands.append((cost, iv.name, iv))
+        cost, ivname, key_iv = min(cands, key=lambda c: (c[0], c[1]))
+        transposition = {"semitones": shift, "interval": ivname,
+                         "verifiedFrac": round(fracs[shift], 3),
+                         "unshiftedFrac": round(fracs[0], 3)}
+
     # ---- events ----
     events = []
     for i, rn in enumerate(rns):
-        off = round(float(rn.getOffsetInHierarchy(rntxt)), 3)
-        nxt = round(float(rns[i + 1].getOffsetInHierarchy(rntxt)), 3) \
-            if i + 1 < len(rns) else off + 1.0
-        rn_pcs = {p.pitchClass for p in rn.pitches}
-        verified = len(rn_pcs - pcs_during(off, nxt)) == 0
+        off = offs[i]
+        k = rn.key if key_iv is None else rn.key.transpose(key_iv)
+        verified = not ({(x + shift if transposition else x) % 12
+                         for x in rnpcs[i]} - wins[i])
         events.append({"offset": off, "measure": rn.measureNumber,
                        "beat": float(rn.beat),
-                       "key": rn.key.tonicPitchNameWithCase,
+                       "key": k.tonicPitchNameWithCase,
                        "figure": rn.figure, "midi": voicing_at(off),
                        "phrase": phrase_of(off), "verified": verified})
+
+    # ---- drop analysis events with no attack anywhere in the score ----
+    # Some analyses mark a change on a beat where no voice attacks (held or
+    # tied chords, or an edition rhythm difference). No attack = no notehead
+    # to align a slot under, so drop the event but RETAIN it for Milestone 3
+    # grading alternatives. A large unmatched fraction means a systematic
+    # analysis/score desync (measure numbering, repeat structure) -- fail
+    # loudly instead of silently dropping half the answer key.
+    svg0, tm0 = render(str(mxl), *SPACING_LEVELS[0])
+    q2_0 = set()
+    for e in tm0:
+        if 'on' in e:
+            q2_0.add(round(float(e['qstamp']), 3))
+    dropped = [ev for ev in events if ev["offset"] not in q2_0]
+    if len(dropped) > 0.2 * len(events):
+        sys.exit(f"riem {riem}: {len(dropped)}/{len(events)} analysis events "
+                 f"have no attack in the score -- systematic desync")
+    events = [ev for ev in events if ev["offset"] in q2_0]
 
     # ---- render levels; pick leftmost-voice notehead id per onset ----
     noteids, svg_paths = [], []
@@ -165,6 +220,7 @@ def build(riem: int, wir_root: Path, out_dir: Path):
             "title": score.metadata.title or f"Riemenschneider {riem}",
             "numPhrases": len(fends), "defaultLevel": DEFAULT_LEVEL,
             "events": events, "noteids": noteids, "parts": parts,
+            "transposition": transposition, "droppedEvents": dropped,
             "analysisSource": "When in Rome (Gotham et al.), CC BY-SA 4.0"}
     (out_dir / "game_data.json").write_text(json.dumps(data))
 

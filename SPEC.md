@@ -67,6 +67,27 @@ monetizing. Clone sparsely (see script docstring); the full repo is large.
    slot x-positions must be strictly increasing in event order. This test
    catches every alignment failure mode encountered so far.
 
+6. **~15 When-in-Rome analyses are in a different key than the music21
+   score** (edition transposition; e.g. riem 17 score f#, analysis e).
+   Figures are key-relative and stay valid; the pipeline detects the
+   semitone shift maximizing pitch verification and transposes the analysis
+   keys (`transposition` field in game_data.json). Discovered 2026-07-04
+   during Milestone 1.
+
+7. **Some analyses mark a harmony on a beat where no voice attacks** (held
+   or tied chords, or edition rhythm differences) — no attack means no
+   notehead to hang a slot on. The pipeline drops such events but retains
+   them in `droppedEvents` (Milestone 3 alternatives seed data). If >20% of
+   events are unmatched, the build fails loudly: that means a systematic
+   analysis/score desync, not a droppable edge case.
+
+8. **A few When-in-Rome analyses follow a different HARMONIZATION of the
+   tune than music21's Riemenschneider numbering** (e.g. riem 170: 8-measure
+   analysis in a, 10-measure score in g — no transposition/offset shift
+   rescues it). These are upstream data mismatches: riem 43, 179, 333 fail
+   the build, and 13 more sit below 60% pitch-verified. All 16 are excluded
+   from v1 pending reconciliation; see reports/milestone1.md Triage.
+
 ## Milestone 1 — full corpus build
 
 Loop `build_chorale.py` over 1..371 and emit a verification report (per
