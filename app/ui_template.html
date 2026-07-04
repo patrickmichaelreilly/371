@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Chorale Analysis — BWV 269</title>
+<title>__TITLE__</title>
 <style>
   :root{
     --paper:#F6F1E4; --paper-deep:#EFE7D3; --ink:#211C14; --ink-soft:#5C5342;
@@ -81,6 +81,17 @@
   .prow button:disabled{opacity:.35;cursor:default}
   #secrow,#keyrow{display:none}
   #secrow.show,#keyrow.show{display:flex}
+
+  /* ---- transport ---- */
+  #transport{display:flex;align-items:center;gap:10px;margin-top:6px;
+             font-family:var(--sans);font-size:10.5px;color:var(--ink-soft);
+             text-transform:uppercase;letter-spacing:.12em}
+  #playbtn{width:40px;height:26px;border:1px solid var(--rule);border-radius:4px;
+           background:transparent;color:var(--ink);font-size:12px;cursor:pointer;
+           line-height:1}
+  #playbtn.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  #tempo{flex:1;min-width:60px;max-width:220px;accent-color:var(--ink);height:18px}
+  #transport b{color:var(--ink)}
 </style>
 </head>
 <body>
@@ -94,6 +105,11 @@
       <b class="sp" data-l="0">tight</b><b class="sp" data-l="1">med</b><b class="sp" data-l="2">wide</b>
     </span>
     <span id="mhint">tap a slot · hold to hear</span>
+  </div>
+  <div id="transport">
+    <button id="playbtn" aria-label="play or stop">&#9654;</button>
+    <input id="tempo" type="range" min="40" max="120" value="72" step="1">
+    <span>Tempo <b id="qpm">72</b> qpm</span>
   </div>
 </header>
 
@@ -289,8 +305,32 @@ function update(){
   document.getElementById('mprog').textContent=`${done}/${DATA.events.length}`;
 }
 
+/* ---------- audio unlock (iOS — SPEC.md pitfall 9) ----------
+   (a) The AudioContext must be created AND resumed synchronously inside a
+   user-gesture handler; doing it in the drone's 300ms hold-timer callback
+   leaves Safari-PWA audio permanently locked.
+   (b) WebAudio lives in iOS's "ambient" audio session, which the ring/silent
+   switch mutes (Bluetooth routing bypasses the switch — hence "works only
+   with Bluetooth"). A looping silent <audio> element promotes the session
+   to "playback", which ignores the switch. */
+const SILENT_WAV='data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YRAAAAAAAAAAAAAAAAAAAAAAAAAA';
+let AC=null, silentEl=null;
+function unlockAudio(){
+  if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
+  if(AC.state!=='running') AC.resume();
+  if(!silentEl){
+    const a=document.createElement('audio');
+    a.setAttribute('playsinline',''); a.loop=true; a.src=SILENT_WAV;
+    a.play().then(()=>{silentEl=a;}).catch(()=>{});
+  }
+}
+document.addEventListener('pointerdown',unlockAudio,true);
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden && AC && AC.state!=='running') AC.resume();
+});
+
 /* ---------- audio drone ---------- */
-let AC=null, live=[];
+let live=[];
 function startDrone(midis){
   if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
   if(AC.state==='suspended') AC.resume();
@@ -319,6 +359,108 @@ function stopDrone(now){
   setTimeout(()=>olds.forEach(o=>{try{o.stop()}catch(_){}}),now?20:160);
   live=[];
 }
+
+/* ---------- full-piece playback (Milestone 2) ----------
+   Lookahead scheduler: a 25 ms tick schedules every note whose start falls
+   inside the next 120 ms at AudioContext time. Tempo is re-anchored on
+   slider input so changes take effect mid-playback. The slot x-mapping
+   doubles as a playhead: cursor x interpolates between adjacent onsets. */
+const ALL_NOTES=DATA.parts.flatMap(p=>p.notes)
+  .filter(n=>n.midi!=null&&n.dur>0).sort((a,b)=>a.offset-b.offset);
+const PIECE_END=ALL_NOTES.reduce((m,n)=>Math.max(m,n.offset+n.dur),0);
+const playBtn=document.getElementById('playbtn'),
+      tempoEl=document.getElementById('tempo'),
+      qpmEl=document.getElementById('qpm');
+let playing=false,curSpq=60/72,anchorQ=0,anchorT=0,schedIdx=0,
+    tickTimer=null,rafId=0,playMaster=null,userHold=false,phIdx=0;
+
+tempoEl.addEventListener('input',()=>{
+  qpmEl.textContent=tempoEl.value;
+  if(playing){ /* re-anchor so the new tempo applies from "now" */
+    const t=AC.currentTime,q=anchorQ+(t-anchorT)/curSpq;
+    anchorQ=q;anchorT=t;curSpq=60/+tempoEl.value;
+  }else curSpq=60/+tempoEl.value;
+});
+
+function playNote(midi,when,dur){
+  const f=440*Math.pow(2,(midi-69)/12);
+  [[1,'triangle',.16],[2,'sine',.06]].forEach(([mult,type,amp])=>{
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type=type;o.frequency.value=f*mult;
+    const rel=Math.max(.05,Math.min(.12,dur*.25));
+    g.gain.setValueAtTime(0,when);
+    g.gain.linearRampToValueAtTime(amp,when+.015);
+    g.gain.setValueAtTime(amp,Math.max(when+.015,when+dur-rel));
+    g.gain.linearRampToValueAtTime(.0001,when+dur);
+    o.connect(g).connect(playMaster);
+    o.start(when);o.stop(when+dur+.05);
+  });
+}
+function tick(){
+  const horizon=AC.currentTime+.12;
+  while(schedIdx<ALL_NOTES.length){
+    const n=ALL_NOTES[schedIdx];
+    const t=anchorT+(n.offset-anchorQ)*curSpq;
+    if(t>horizon)break;
+    const dur=n.dur*curSpq*(n.fermata?1.7:1);
+    if(t>AC.currentTime-.03)playNote(n.midi,Math.max(t,AC.currentTime),dur);
+    schedIdx++;
+  }
+  if(anchorQ+(AC.currentTime-anchorT)/curSpq>PIECE_END+1)stopPlayback();
+}
+function playheadX(q){
+  const xs=slots.map(s=>+s.dataset.x),offs=DATA.events.map(e=>e.offset);
+  if(q<=offs[0])return xs[0];
+  if(phIdx>=offs.length-1||offs[phIdx]>q)phIdx=0;
+  while(phIdx<offs.length-2&&offs[phIdx+1]<=q)phIdx++;
+  const o0=offs[phIdx],o1=offs[phIdx+1];
+  if(q>=o1)return xs[offs.length-1];
+  return xs[phIdx]+(xs[phIdx+1]-xs[phIdx])*(q-o0)/(o1-o0);
+}
+function raf(){
+  if(!playing)return;
+  const q=anchorQ+(AC.currentTime-anchorT)/curSpq;
+  const x=playheadX(q);
+  cursor.style.display='block';
+  cursor.style.left=x+'px';
+  cursor.style.height=slotsEl.offsetTop+'px';
+  if(!userHold)scroller.scrollLeft=x-scroller.clientWidth*.38;
+  rafId=requestAnimationFrame(raf);
+}
+function startPlayback(){
+  unlockAudio();
+  stopDrone(true);
+  playMaster=AC.createGain();playMaster.gain.value=.9;
+  const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=2400;
+  playMaster.connect(lp).connect(AC.destination);
+  const startQ=sel>=0?DATA.events[sel].offset:0;
+  anchorQ=startQ;anchorT=AC.currentTime+.06;
+  curSpq=60/+tempoEl.value;phIdx=0;
+  schedIdx=ALL_NOTES.findIndex(n=>n.offset>=startQ-1e-6);
+  if(schedIdx<0)schedIdx=ALL_NOTES.length;
+  playing=true;
+  playBtn.innerHTML='&#9632;';playBtn.classList.add('on');
+  tickTimer=setInterval(tick,25);tick();
+  rafId=requestAnimationFrame(raf);
+}
+function stopPlayback(){
+  if(!playing)return;
+  playing=false;clearInterval(tickTimer);cancelAnimationFrame(rafId);
+  if(playMaster){
+    const pm=playMaster,t=AC.currentTime;
+    pm.gain.setValueAtTime(pm.gain.value,t);
+    pm.gain.linearRampToValueAtTime(0,t+.08);
+    setTimeout(()=>pm.disconnect(),200);
+    playMaster=null;
+  }
+  playBtn.innerHTML='&#9654;';playBtn.classList.remove('on');
+  if(sel>=0)cursor.style.left=slots[sel].dataset.x+'px';
+  else cursor.style.display='none';
+}
+playBtn.onclick=()=>playing?stopPlayback():startPlayback();
+scroller.addEventListener('pointerdown',()=>{userHold=true;});
+scroller.addEventListener('pointerup',()=>{userHold=false;});
+scroller.addEventListener('pointercancel',()=>{userHold=false;});
 
 /* ---------- slot pointer handling: tap = select, hold = drone ---------- */
 slots.forEach((d,i)=>{
@@ -363,7 +505,9 @@ document.getElementById('enterbtn').onclick=commit;
 
 /* ---------- init ---------- */
 document.getElementById('title').textContent=DATA.title;
-document.getElementById('mkey').textContent=DATA.events[0].key+' major';
+const k0=DATA.events[0].key;
+document.getElementById('mkey').textContent=
+  k0+(k0[0]===k0[0].toLowerCase()?' minor':' major');
 document.getElementById('mphr').textContent=DATA.numPhrases;
 update();
 </script>

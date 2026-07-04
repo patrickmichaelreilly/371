@@ -88,6 +88,18 @@ monetizing. Clone sparsely (see script docstring); the full repo is large.
    the build, and 13 more sit below 60% pitch-verified. All 16 are excluded
    from v1 pending reconciliation; see reports/milestone1.md Triage.
 
+9. **iOS WebAudio needs two separate unlocks** (found on-device 2026-07-04,
+   Safari- and Chrome-saved PWAs). (a) The AudioContext must be created and
+   resumed SYNCHRONOUSLY inside a user-gesture handler — resuming it in the
+   drone's 300 ms hold-timer callback leaves Safari-PWA audio permanently
+   silent. (b) WebAudio runs in iOS's "ambient" audio session, which the
+   ring/silent switch mutes; Bluetooth routing bypasses the switch, which is
+   why audio "worked only with Bluetooth" in the Chrome PWA. A looping
+   silent <audio> element promotes the session to "playback", which ignores
+   the switch. Both are handled by `unlockAudio()` in the template
+   (document-level capture pointerdown); never move context resume back
+   into a timer.
+
 ## Milestone 1 — full corpus build
 
 Loop `build_chorale.py` over 1..371 and emit a verification report (per
