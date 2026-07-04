@@ -23,6 +23,13 @@ cd When-in-Rome && git sparse-checkout set "Corpus/Early_Choral/Bach,_Johann_Seb
 # full corpus + verification report (Milestone 1)
 PYTHONPATH=pipeline .venv/bin/python pipeline/build_corpus.py --jobs 8
 # -> build/report.md, build/report.json, build/NNN/{game_data.json,alternatives.json,sys*.svg}
+
+# package the site data (gzipped bundles + picker manifest)
+.venv/bin/python pipeline/build_site.py
+# -> chorales/NNN.json.gz, chorales/index.json (committed; served by Pages)
+
+# local dev server (the app fetches chorales/ at runtime)
+python3 -m http.server 8000   # then open http://localhost:8000/
 ```
 
 ## Attribution

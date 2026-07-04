@@ -147,10 +147,43 @@ discrete spacing levels into a true continuous slider and shrinks the payload
 by ~500 KB per chorale. Target stack per prior projects: PWA, offline-first;
 the whole corpus as JSON should be a few MB.
 
+## Status (2026-07-04, Claude Code session)
+
+Milestones 1-3 are built; see git history for details.
+
+- **M1**: `pipeline/build_corpus.py` builds 1..371 in parallel with the
+  alignment invariant as a check; 368 build, 355 pass triage (>=60%
+  pitch-verified), 16 excluded (reports/milestone1.md). Transposed-edition
+  and no-attack-event hazards are auto-handled in build_chorale.py.
+- **M2**: playback lives in index.html exactly per the design above
+  (25 ms tick / 120 ms horizon, live tempo re-anchor, fermata x1.7,
+  playhead via slot-x interpolation). iOS unlock: see pitfall 9.
+- **M3**: build_chorale.py emits per-event `accepts`
+  ([{f: canonical figure, k: null|''|key}]) from: V<->V7 by sounding
+  evidence, tonicization<->modulation boundary readings both directions,
+  N/aug6 spellings, mNNvarN variant lines (mini-parser: RomanText beats
+  can be fractional like b11/3, and raw lines spell ø as "/o"), and the
+  BCMH second analyses. The client (index.html) canonicalizes entries the
+  same way (canonFig MUST stay byte-identical to canon_fig; there is a
+  vocabulary cross-check in the session test scripts) and matches against
+  accepts. Palette gained b/#, Δ(maj), N, It6/Ger6/5/Fr4/3 and a dynamic
+  per-chorale key row.
+- The app is now a fetch-based loader at /index.html with a chorale
+  picker. Chorale bundles ship as chorales/NNN.json.gz (game_data + three
+  SVGs, ~85 KB each) and are decompressed client-side with
+  DecompressionStream — raw SVGs would be ~250 MB per corpus rebuild in
+  git history; gzip keeps it ~30 MB. Milestone 4's client-side Verovio
+  makes the SVGs (and this compromise) go away entirely.
+
 ## Manifest
 
-    pipeline/build_chorale.py   tested; reproduces session output (riem 1)
-    app/ui_template.html        template with __SVG0/1/2__ and __DATA__ slots
-    app/chorale_analysis.html   built prototype, riem 1, self-contained
-    data/game_data.json         riem 1 build output (with parts data)
+    pipeline/build_chorale.py   per-chorale build: SVGs + game_data (accepts,
+                                transposition, droppedEvents)
+    pipeline/build_corpus.py    Milestone 1 runner: parallel build, invariant
+                                checks, report.json/md, alternatives.json
+    pipeline/build_site.py      package chorales/NNN.json.gz + index.json
+    index.html                  the app (loader + picker; single source)
+    chorales/                   published bundles + manifest (committed)
+    reports/milestone1.md       verification report + triage
+    data/game_data.json         riem 1 prototype-session reference output
     data/analysis_001.txt       reference copy of the When-in-Rome source

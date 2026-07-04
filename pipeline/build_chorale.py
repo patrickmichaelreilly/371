@@ -28,6 +28,168 @@ import verovio
 SPACING_LEVELS = [(0.25, 0.55), (0.40, 0.58), (0.90, 0.55)]  # tight/medium/wide
 DEFAULT_LEVEL = 1
 
+# ---------------------------------------------------------------------------
+# Milestone 3: canonical figure form + accepted-alternative generation.
+# canon_fig() MUST stay in sync with the JS twin in the app (parseFig/canonFig)
+# -- both sides normalize to the same string before comparing.
+# ---------------------------------------------------------------------------
+FIGRE = re.compile(
+    r'^(b|#)?(It|Ger|Fr|N|Cad|VII|VI|IV|III|II|V|I|vii|vi|iv|iii|ii|v|i)'
+    r'(o|°|ø|\+)?((?:maj)?[0-9/]*)'
+    r'((?:/(?:b|#)?(?:VII|VI|IV|III|II|V|I|vii|vi|iv|iii|ii|v|i))*)$')
+
+# pitch-identical spellings (Neapolitan / augmented sixths)
+SPELLINGS = {'N6': ['bII6'], 'N': ['N6', 'bII6'], 'bII6': ['N6'],
+             'It6': ['It'], 'Ger65': ['Ger6', 'Ger'], 'Fr43': ['Fr']}
+
+
+def canon_fig(fig):
+    """Normalize a RomanText figure to canonical comparison form:
+    bracketed alterations stripped, figure digits joined (6/5 -> 65),
+    degree symbols unified, redundant 53 dropped."""
+    f = re.sub(r'\[[^\]]*\]', '', fig or '')
+    f = f.replace('/o', 'ø').replace('°', 'o').replace('%', 'ø')
+    m = FIGRE.match(f)
+    if not m:
+        return re.sub(r'(?<=\d)/(?=\d)', '', f)
+    acc, num, qual, figs, chain = m.groups()
+    figs = (figs or '').replace('/', '')
+    if figs == '53':
+        figs = ''
+    return (acc or '') + num + (qual or '') + figs + (chain or '')
+
+
+def norm_key_name(s):
+    """RomanText key token ('Eb', 'f#') -> music21 tonicPitchNameWithCase
+    style ('E-', 'f#')."""
+    s = s.strip().rstrip(':')
+    return s[0] + s[1:].replace('b', '-')
+
+
+def rn_of_key(new_key, old_key):
+    """Express new_key's tonic as a roman numeral of old_key (None if the
+    degree is chromatic in a way we can't spell simply)."""
+    from music21 import pitch as m21pitch
+    try:
+        deg, acc = old_key.getScaleDegreeAndAccidentalFromPitch(new_key.tonic)
+    except Exception:
+        return None
+    pref = ''
+    if acc is not None and acc.alter:
+        if abs(acc.alter) > 1:
+            return None
+        pref = 'b' if acc.alter < 0 else '#'
+    numeral = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'][deg - 1]
+    if new_key.mode == 'minor':
+        numeral = numeral.lower()
+    return pref + numeral
+
+
+def parse_variant_lines(ana_path, rntxt, rns):
+    """mNNvarK lines -> [(offset, key_or_None, figure)]. Beats are resolved
+    through the main analysis's measure offsets and active time signature."""
+    from fractions import Fraction
+    mmap = {}
+    ts = None
+    for m in rntxt.parts[0].getElementsByClass('Measure'):
+        if m.timeSignature is not None:
+            ts = m.timeSignature
+        mmap[m.number] = (float(m.offset),
+                          float(ts.beatDuration.quarterLength) if ts else 1.0)
+    out = []
+    for ln in Path(ana_path).read_text().splitlines():
+        vm = re.match(r'^m(\d+)var\d+\s+(.*)', ln)
+        if not vm or int(vm.group(1)) not in mmap:
+            continue
+        moff, bdur = mmap[int(vm.group(1))]
+        beat, cur_key = 1.0, None
+        for tok in vm.group(2).split():
+            if re.fullmatch(r'b[\d.]+(?:/\d+)?', tok):
+                try:
+                    beat = float(Fraction(tok[1:]))
+                except Exception:
+                    beat = 1.0
+            elif tok.endswith(':'):
+                cur_key = norm_key_name(tok)
+            elif re.fullmatch(r':?\|\|:?', tok) or not tok:
+                continue
+            else:
+                out.append((round(moff + (beat - 1) * bdur, 3), cur_key, tok))
+    return out
+
+
+def build_accepts(rns, rntxt, offs, wins, key_iv, alt_events):
+    """Per analysis event, the list of accepted answers:
+    [{'f': canonical figure, 'k': None | '' | key-name}].
+    k=None: the event's own key rule applies; k='': explicitly no key-change
+    entry; k='X': the answer is only correct together with key-change X.
+    Sources: primary reading; V<->V7 by sounding evidence; tonicization vs.
+    modulation boundary readings; enharmonic/aug6 spellings; variant lines
+    and the BCMH second analysis (alt_events: [(offset, key_or_None, fig)])."""
+    alt_by_off = {}
+    for off, k, fig in alt_events:
+        alt_by_off.setdefault(off, []).append((k, fig))
+    accepts_all = []
+    for i, rn in enumerate(rns):
+        acc = [{"f": canon_fig(rn.figure), "k": None}]
+
+        def add(f, k=None):
+            e = {"f": f, "k": k}
+            if f and e not in acc:
+                acc.append(e)
+
+        # spelling equivalences
+        for alt in SPELLINGS.get(acc[0]["f"], []):
+            add(alt)
+
+        # V <-> V7 when the seventh's presence is a mid-span subtlety
+        m = re.match(r'^(V)(6?5?|64|7|43|2)?((?:/.+)?)$', acc[0]["f"])
+        if m:
+            base_key = rn.secondaryRomanNumeralKey or rn.key
+            pc7 = (base_key.tonic.pitchClass + 5) % 12
+            inv, chain = m.group(2) or '', m.group(3)
+            up = {'': '7', '6': '65'}
+            down = {'7': '', '65': '6', '43': '64'}
+            if inv in up and pc7 in wins[i]:
+                add('V' + up[inv] + chain)
+            onset_pcs = {p.pitchClass for p in rn.pitches}
+            if inv in down and pc7 not in onset_pcs:
+                add('V' + down[inv] + chain)
+
+        # tonicization reading -> equivalent modulation reading
+        if rn.secondaryRomanNumeral is not None:
+            sec = rn.secondaryRomanNumeral.figure
+            f0 = acc[0]["f"]
+            if f0.endswith('/' + canon_fig(sec)):
+                primary = f0[: -len('/' + canon_fig(sec))]
+                sk = rn.secondaryRomanNumeralKey
+                if sk is not None:
+                    k = sk if key_iv is None else sk.transpose(key_iv)
+                    add(primary, k.tonicPitchNameWithCase)
+
+        # modulation boundary -> equivalent secondary-function reading
+        if i > 0 and rn.key != rns[i - 1].key:
+            nk = rn_of_key(rn.key, rns[i - 1].key)
+            if nk:
+                f0 = acc[0]["f"]
+                m2 = re.match(r'^(i|I)(o|ø|\+)?((?:maj)?\d*)$', f0)
+                if m2:  # tonic of the new key = nk itself in the old key
+                    add(nk + (m2.group(2) or '') + (m2.group(3) or ''), '')
+                elif '/' not in f0:
+                    add(f0 + '/' + nk, '')
+
+        # variant readings + BCMH second analysis at this exact offset
+        ev_key = (rn.key if key_iv is None else
+                  rn.key.transpose(key_iv)).tonicPitchNameWithCase
+        for k, fig in alt_by_off.get(offs[i], []):
+            cf = canon_fig(fig)
+            if k is None or k == ev_key:
+                add(cf)
+            else:
+                add(cf, k)
+        accepts_all.append(acc)
+    return accepts_all
+
 
 def load_score(riem: int):
     """Riemenschneider number -> music21 score, repeats stripped.
@@ -153,6 +315,25 @@ def build(riem: int, wir_root: Path, out_dir: Path):
                          "verifiedFrac": round(fracs[shift], 3),
                          "unshiftedFrac": round(fracs[0], 3)}
 
+    # ---- grading alternatives (Milestone 3) ----
+    alt_events = parse_variant_lines(ana, rntxt, rns)
+    bcmh_path = ana.parent / "analysis_BCMH.txt"
+    if bcmh_path.exists():
+        try:
+            bs = converter.parse(str(bcmh_path), format='romanText')
+            alt_events += [(round(float(b.getOffsetInHierarchy(bs)), 3),
+                            b.key.tonicPitchNameWithCase, b.figure)
+                           for b in bs.flatten().getElementsByClass(
+                               roman.RomanNumeral)]
+        except Exception:
+            pass
+    if key_iv is not None:  # alt keys live in the analysis's key world
+        def _tk(k):
+            return None if k is None else \
+                key.Key(k).transpose(key_iv).tonicPitchNameWithCase
+        alt_events = [(o, _tk(k), f) for o, k, f in alt_events]
+    accepts_all = build_accepts(rns, rntxt, offs, wins, key_iv, alt_events)
+
     # ---- events ----
     events = []
     for i, rn in enumerate(rns):
@@ -164,7 +345,8 @@ def build(riem: int, wir_root: Path, out_dir: Path):
                        "beat": float(rn.beat),
                        "key": k.tonicPitchNameWithCase,
                        "figure": rn.figure, "midi": voicing_at(off),
-                       "phrase": phrase_of(off), "verified": verified})
+                       "phrase": phrase_of(off), "verified": verified,
+                       "accepts": accepts_all[i]})
 
     # ---- drop analysis events with no attack anywhere in the score ----
     # Some analyses mark a change on a beat where no voice attacks (held or

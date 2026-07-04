@@ -1,11 +1,637 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=app/chorale_analysis.html">
-  <title>Chorale Analysis Game</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>371 — Chorale Analysis</title>
+<style>
+  :root{
+    --paper:#F6F1E4; --paper-deep:#EFE7D3; --ink:#211C14; --ink-soft:#5C5342;
+    --rule:#C9BC9E; --red:#A93226; --green:#3E6B4A; --amber:rgba(196,148,42,.28);
+    --serif:'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+    --sans:ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{background:var(--paper);color:var(--ink);font-family:var(--serif);
+       display:flex;flex-direction:column;overflow:hidden}
+
+  header{padding:8px 16px 6px;border-bottom:1px solid var(--rule);flex:none}
+  #headrow{display:flex;align-items:baseline;gap:10px}
+  header h1{font-size:15px;font-weight:600;font-style:italic;letter-spacing:.01em;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+  #pick{font-family:var(--sans);font-size:11px;color:var(--ink);background:transparent;
+        border:1px solid var(--rule);border-radius:4px;padding:2px 4px;max-width:44vw}
+  .meta{display:flex;gap:14px;margin-top:2px;font-family:var(--sans);font-size:10.5px;
+        text-transform:uppercase;letter-spacing:.12em;color:var(--ink-soft)}
+  .meta b{color:var(--ink)}
+  .meta .sp{cursor:pointer;font-weight:400;color:var(--ink-soft);padding:0 2px}
+  .meta .sp.on{color:var(--ink);font-weight:700;text-decoration:underline}
+
+  /* ---- scroll region: staff + slots ---- */
+  #scroller{flex:1 1 auto;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;
+            position:relative;background:
+            linear-gradient(var(--paper) 0%, var(--paper-deep) 100%)}
+  #content{position:relative;height:100%;min-width:100%}
+  #staff{padding:8px 24px 0}
+  .svgvar{display:none}
+  .svgvar.on{display:block}
+  #staff svg{height:min(46vh,300px);width:auto;display:block}
+  #staff svg *{color:var(--ink)}
+
+  #cursor{position:absolute;top:0;width:2px;background:var(--amber);
+          box-shadow:0 0 0 6px var(--amber);pointer-events:none;display:none}
+
+  #slots{position:absolute;left:0;right:0;height:74px;top:calc(min(46vh,300px) + 14px)}
+  .slot{position:absolute;transform:translateX(-50%);min-width:36px;height:64px;
+        display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+        cursor:pointer;user-select:none;-webkit-user-select:none}
+  .slot .tick{width:1px;height:8px;background:var(--rule)}
+  .slot .box{min-width:34px;padding:2px 5px;height:34px;display:flex;align-items:center;
+        justify-content:center;border-bottom:1.5px solid var(--rule);font-size:17px;
+        color:var(--ink);white-space:nowrap}
+  .slot .mb{font-family:var(--sans);font-size:8.5px;color:var(--ink-soft);margin-top:2px;
+        letter-spacing:.05em}
+  .slot.sel .box{border-bottom-color:var(--ink);background:var(--amber)}
+  .slot.ok .box{border-bottom-color:var(--green);color:var(--green)}
+  .slot.bad .box{border-bottom-color:var(--red);color:var(--red)}
+  .slot.revealed .box{color:var(--red);font-style:italic}
+  .slot.droning .box{background:var(--amber)}
+
+  /* stacked theory typography */
+  .rn{display:inline-flex;align-items:baseline;line-height:1}
+  .rn .num{font-size:1em;letter-spacing:.02em}
+  .rn .qual{font-size:.72em;transform:translateY(-.45em)}
+  .rn .figs{display:inline-flex;flex-direction:column;justify-content:center;
+            font-size:.58em;line-height:1.05;margin-left:1.5px;transform:translateY(-.1em)}
+  .rn .sec{font-size:.85em;margin-left:1px}
+  .rn .keych{font-size:.8em;margin-right:3px;color:var(--ink-soft)}
+
+  /* ---- palette ---- */
+  #palette{flex:none;border-top:1px solid var(--rule);background:var(--paper);
+           padding:8px 10px calc(10px + env(safe-area-inset-bottom));font-family:var(--sans)}
+  #preview{display:flex;align-items:center;gap:12px;margin-bottom:8px;min-height:34px}
+  #ptoken{font-family:var(--serif);font-size:26px;min-width:70px}
+  #pmsg{font-size:11px;color:var(--ink-soft);letter-spacing:.04em}
+  #pmsg.bad{color:var(--red)} #pmsg.ok{color:var(--green)}
+  .prow{display:flex;gap:5px;margin-bottom:5px;flex-wrap:wrap}
+  .prow button{flex:1;min-width:34px;height:38px;border:1px solid var(--rule);border-radius:4px;
+        background:transparent;color:var(--ink);font-family:var(--serif);font-size:16px;
+        cursor:pointer}
+  .prow button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  .prow button.util{font-family:var(--sans);font-size:11px;letter-spacing:.08em;
+        text-transform:uppercase}
+  .prow button.go{background:var(--green);border-color:var(--green);color:#fff}
+  .prow button:disabled{opacity:.35;cursor:default}
+  #secrow,#keyrow,#extrarow{display:none}
+  #secrow.show,#keyrow.show,#extrarow.show{display:flex}
+
+  /* ---- transport ---- */
+  #transport{display:flex;align-items:center;gap:10px;margin-top:6px;
+             font-family:var(--sans);font-size:10.5px;color:var(--ink-soft);
+             text-transform:uppercase;letter-spacing:.12em}
+  #playbtn{width:40px;height:26px;border:1px solid var(--rule);border-radius:4px;
+           background:transparent;color:var(--ink);font-size:12px;cursor:pointer;
+           line-height:1}
+  #playbtn.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  #tempo{flex:1;min-width:60px;max-width:220px;accent-color:var(--ink);height:18px}
+  #transport b{color:var(--ink)}
+</style>
 </head>
 <body>
-  <a href="app/chorale_analysis.html">Open the chorale analysis prototype</a>
+<header>
+  <div id="headrow">
+    <h1 id="title">Loading…</h1>
+    <select id="pick" aria-label="choose chorale"></select>
+  </div>
+  <div class="meta">
+    <span>Key <b id="mkey">–</b></span>
+    <span>Phrases <b id="mphr">–</b></span>
+    <span>Progress <b id="mprog">0/0</b></span>
+    <span style="margin-left:auto">Spacing
+      <b class="sp" data-l="0">tight</b><b class="sp" data-l="1">med</b><b class="sp" data-l="2">wide</b>
+    </span>
+  </div>
+  <div id="transport">
+    <button id="playbtn" aria-label="play or stop">&#9654;</button>
+    <input id="tempo" type="range" min="40" max="120" value="72" step="1">
+    <span>Tempo <b id="qpm">72</b> qpm</span>
+  </div>
+</header>
+
+<div id="scroller">
+  <div id="content">
+    <div id="staff">
+      <div class="svgvar" data-l="0"></div>
+      <div class="svgvar" data-l="1"></div>
+      <div class="svgvar" data-l="2"></div>
+    </div>
+    <div id="cursor"></div>
+    <div id="slots"></div>
+  </div>
+</div>
+
+<div id="palette">
+  <div id="preview">
+    <span id="ptoken">&nbsp;</span>
+    <span id="pmsg">Select a chord slot to begin.</span>
+  </div>
+  <div class="prow" id="numrow">
+    <button data-n="I">I</button><button data-n="II">II</button><button data-n="III">III</button>
+    <button data-n="IV">IV</button><button data-n="V">V</button><button data-n="VI">VI</button>
+    <button data-n="VII">VII</button>
+  </div>
+  <div class="prow">
+    <button data-q="M" class="util">Maj</button>
+    <button data-q="m" class="util">min</button>
+    <button data-q="o">°</button>
+    <button data-q="%">ø</button>
+    <button data-q="+">+</button>
+    <button id="keybtn" class="util">Key:</button>
+    <button id="secbtn" class="util">/x</button>
+  </div>
+  <div class="prow">
+    <button data-f="">5/3</button><button data-f="6">6</button><button data-f="64">6·4</button>
+    <button data-f="7">7</button><button data-f="65">6·5</button><button data-f="43">4·3</button>
+    <button data-f="42">4·2</button>
+    <button id="extrabtn" class="util">…</button>
+  </div>
+  <div class="prow" id="extrarow">
+    <button data-a="b">&#9837;</button>
+    <button data-a="#">&#9839;</button>
+    <button id="majbtn">&Delta;</button>
+    <button data-x="N">N</button>
+    <button data-x="It">It6</button>
+    <button data-x="Ger">Ger<small>6·5</small></button>
+    <button data-x="Fr">Fr<small>4·3</small></button>
+  </div>
+  <div class="prow" id="secrow">
+    <button data-s="ii">/ii</button><button data-s="iii">/iii</button><button data-s="IV">/IV</button>
+    <button data-s="V">/V</button><button data-s="vi">/vi</button><button data-s="vii">/vii</button>
+    <button data-s="" class="util">none</button>
+  </div>
+  <div class="prow" id="keyrow"></div>
+  <div class="prow">
+    <button id="clearbtn" class="util">Clear</button>
+    <button id="enterbtn" class="go util">Enter</button>
+  </div>
+</div>
+
+<script>
+/* ============ figure parsing & canonical form (Milestone 3) ============
+   canonFig() must stay in sync with canon_fig() in pipeline/build_chorale.py:
+   both sides normalize to the same string before comparison against the
+   per-event accepts list generated by the pipeline. */
+const NUMRE=/^(b|#)?(It|Ger|Fr|N|Cad|VII|VI|IV|III|II|V|I|vii|vi|iv|iii|ii|v|i)(o|°|ø|\+)?((?:maj)?[0-9/]*)((?:\/(?:b|#)?(?:VII|VI|IV|III|II|V|I|vii|vi|iv|iii|ii|v|i))*)$/;
+function parseFig(fig){
+  const f=(fig||'').replace(/\[[^\]]*\]/g,'')
+    .replace(/\/o/g,'ø').replace(/°/g,'o').replace(/%/g,'ø');
+  const m=f.match(NUMRE);
+  if(!m) return null;
+  let figs=(m[4]||'').replace(/\//g,''), maj=false;
+  if(figs.startsWith('maj')){maj=true;figs=figs.slice(3);}
+  if(figs==='53') figs='';
+  return {acc:m[1]||'',num:m[2],qual:m[3]||'',maj,figs,sec:m[5]||''};
+}
+function canonFig(p){
+  if(!p) return null;
+  return p.acc+p.num+p.qual+(p.maj?'maj':'')+p.figs+p.sec;
+}
+
+/* ---------- stacked theory typography ---------- */
+function rnHTML(p, keych){
+  if(!p) return '&nbsp;';
+  const qmap={o:'°','ø':'ø','+':'+'};
+  let h='<span class="rn">';
+  if(keych) h+=`<span class="keych">${keych.replace('-','♭')}:</span>`;
+  h+=`<span class="num">${p.acc==='b'?'♭':p.acc==='#'?'♯':''}${p.num}</span>`;
+  if(p.qual) h+=`<span class="qual">${qmap[p.qual]||p.qual}</span>`;
+  if(p.maj) h+=`<span class="qual">Δ</span>`;
+  if(p.figs){
+    const stack=p.figs.match(/\d/g).map(d=>`<span>${d}</span>`).join('');
+    h+=`<span class="figs">${stack}</span>`;
+  }
+  if(p.sec) h+=`<span class="sec">${p.sec}</span>`;
+  return h+'</span>';
+}
+
+/* ================= chorale loading ================= */
+let DATA=null, slots=[], level=1, sel=-1, attempts={}, results={};
+const scroller=document.getElementById('scroller'),
+      content=document.getElementById('content'),
+      slotsEl=document.getElementById('slots'),
+      cursor=document.getElementById('cursor'),
+      pick=document.getElementById('pick');
+
+async function fetchBundle(riem){
+  const url=`chorales/${String(riem).padStart(3,'0')}.json.gz`;
+  const r=await fetch(url);
+  if(!r.ok) throw new Error(`${url}: ${r.status}`);
+  const buf=await r.arrayBuffer();
+  if(new Uint8Array(buf)[0]===0x7b)           /* '{' — already decompressed */
+    return JSON.parse(new TextDecoder().decode(buf));
+  const st=new Response(new Blob([buf]).stream()
+            .pipeThrough(new DecompressionStream('gzip')));
+  return JSON.parse(await st.text());
+}
+
+function setup(data){
+  stopPlayback(); stopDrone(true);
+  DATA=data; sel=-1; attempts={}; results={};
+  cursor.style.display='none';
+  /* pre-parse answers; keyChange = first event of a new key region */
+  let prevKey=null;
+  DATA.events.forEach(e=>{
+    e.ans=parseFig(e.figure);
+    e.keyChange=(prevKey!==null&&e.key!==prevKey)?e.key:null;
+    prevKey=e.key;
+  });
+  document.querySelectorAll('.svgvar').forEach((v,i)=>{v.innerHTML=DATA.svgs[i];});
+  slotsEl.innerHTML=''; slots=[];
+  DATA.events.forEach((e,i)=>{
+    const d=document.createElement('div');
+    d.className='slot'; d.dataset.i=i;
+    d.innerHTML=`<div class="tick"></div><div class="box" id="box${i}">&nbsp;</div>
+                 <div class="mb">m${e.measure}·${(''+e.beat).replace('.5','½')}</div>`;
+    attachSlotHandlers(d,i);
+    slotsEl.appendChild(d); slots.push(d);
+  });
+  /* dynamic key row from this chorale's key vocabulary */
+  const keys=[...new Set(DATA.events.map(e=>e.key))];
+  const keyrow=document.getElementById('keyrow');
+  keyrow.innerHTML='';
+  keys.forEach(k=>{
+    const b=document.createElement('button');
+    b.dataset.k=k; b.textContent=k.replace('-','♭');
+    b.onclick=()=>{state.key=k;keyrow.classList.remove('show');paint();};
+    keyrow.appendChild(b);
+  });
+  const none=document.createElement('button');
+  none.className='util'; none.textContent='none';
+  none.onclick=()=>{state.key='';keyrow.classList.remove('show');paint();};
+  keyrow.appendChild(none);
+  /* header */
+  document.getElementById('title').textContent=
+    `${DATA.riemenschneider} · ${DATA.title||''}`;
+  const k0=DATA.events[0].key;
+  document.getElementById('mkey').textContent=
+    k0.replace('-','♭')+(k0[0]===k0[0].toLowerCase()?' minor':' major');
+  document.getElementById('mphr').textContent=DATA.numPhrases;
+  update(); resetState();
+  msg('Select a chord slot to begin.');
+  recomputeNotes();
+  scroller.scrollLeft=0;
+  requestAnimationFrame(layout);
+}
+
+async function loadChorale(riem){
+  try{
+    const data=await fetchBundle(riem);
+    setup(data);
+    localStorage.setItem('riem',riem);
+    if(pick.value!==String(riem)) pick.value=String(riem);
+  }catch(err){
+    msg(`Could not load chorale ${riem} — ${err.message}`,'bad');
+  }
+}
+
+async function init(){
+  let manifest=[];
+  try{ manifest=await (await fetch('chorales/index.json')).json(); }
+  catch(e){ msg('Could not load chorale list — '+e.message,'bad'); return; }
+  manifest.forEach(m=>{
+    const o=document.createElement('option');
+    o.value=m.riem; o.textContent=`${m.riem} · ${m.title||''}`;
+    pick.appendChild(o);
+  });
+  pick.onchange=()=>loadChorale(+pick.value);
+  const last=+localStorage.getItem('riem')||manifest[0].riem;
+  const start=manifest.some(m=>m.riem===last)?last:manifest[0].riem;
+  pick.value=String(start);
+  await loadChorale(start);
+}
+
+/* ---------- layout: slots aligned to SVG note elements ---------- */
+function layout(){
+  if(!DATA) return;
+  document.querySelectorAll('.svgvar').forEach(v=>v.classList.toggle('on',+v.dataset.l===level));
+  document.querySelectorAll('.sp').forEach(b=>b.classList.toggle('on',+b.dataset.l===level));
+  const svg=document.querySelector('.svgvar.on svg');
+  if(!svg) return;
+  const cRect=content.getBoundingClientRect(), sRect=svg.getBoundingClientRect();
+  DATA.events.forEach((e,i)=>{
+    const nh=svg.querySelector('#'+CSS.escape(DATA.noteids[level][i])+' .notehead');
+    if(!nh) return;
+    const r=nh.getBoundingClientRect();
+    const x=r.left + r.width/2 - cRect.left;
+    slots[i].style.left=x+'px';
+    slots[i].dataset.x=x;
+  });
+  content.style.width=(sRect.width+240)+'px';
+  if(sel>=0)cursor.style.left=slots[sel].dataset.x+'px';
+}
+document.querySelectorAll('.sp').forEach(b=>b.onclick=()=>{level=+b.dataset.l;layout();});
+window.addEventListener('resize',layout);
+
+/* ---------- entry state ---------- */
+const state={num:null,qual:'M',figs:'',sec:'',key:'',acc:'',maj:false};
+function resetState(){state.num=null;state.qual='M';state.figs='';state.sec='';
+                      state.key='';state.acc='';state.maj=false;paint();}
+function currentParse(){
+  if(!state.num) return null;
+  if(state.num==='It'||state.num==='Ger'||state.num==='Fr'){
+    const figs=state.figs||{It:'6',Ger:'65',Fr:'43'}[state.num];
+    return {acc:'',num:state.num,qual:'',maj:false,figs,sec:''};
+  }
+  if(state.num==='N')
+    return {acc:'',num:'N',qual:'',maj:false,figs:state.figs==='6'?'6':'',sec:''};
+  const lower=(state.qual==='m'||state.qual==='o'||state.qual==='%');
+  const qual=(state.qual==='o')?'o':(state.qual==='%')?'ø':(state.qual==='+')?'+':'';
+  let figs=state.figs;
+  if(state.maj&&figs==='42') figs='2';
+  return {acc:state.acc, num:lower?state.num.toLowerCase():state.num,
+          qual, maj:state.maj, figs, sec:state.sec?'/'+state.sec:''};
+}
+function paint(){
+  document.querySelectorAll('#numrow button').forEach(b=>b.classList.toggle('on',b.dataset.n===state.num));
+  document.querySelectorAll('[data-q]').forEach(b=>b.classList.toggle('on',b.dataset.q===state.qual));
+  document.querySelectorAll('[data-f]').forEach(b=>b.classList.toggle('on',b.dataset.f===state.figs));
+  document.querySelectorAll('[data-s]').forEach(b=>b.classList.toggle('on',b.dataset.s===state.sec&&state.sec!==''));
+  document.querySelectorAll('[data-k]').forEach(b=>b.classList.toggle('on',b.dataset.k===state.key&&state.key!==''));
+  document.querySelectorAll('[data-a]').forEach(b=>b.classList.toggle('on',b.dataset.a===state.acc&&state.acc!==''));
+  document.querySelectorAll('[data-x]').forEach(b=>b.classList.toggle('on',b.dataset.x===state.num));
+  document.getElementById('majbtn').classList.toggle('on',state.maj);
+  document.getElementById('ptoken').innerHTML=rnHTML(currentParse(),state.key||null);
+}
+function msg(t,cls){const m=document.getElementById('pmsg');m.textContent=t;m.className=cls||'';}
+
+/* ---------- selection, grading ---------- */
+function select(i){
+  if(sel>=0) slots[sel].classList.remove('sel');
+  sel=i; slots[i].classList.add('sel');
+  const e=DATA.events[i];
+  resetState();
+  msg(`m${e.measure} beat ${e.beat} — enter the numeral`+(e.keyChange?'  (a key change happens near here…)':''));
+  cursor.style.display='block';
+  cursor.style.left=slots[i].dataset.x+'px';
+  cursor.style.height=(slotsEl.offsetTop)+'px';
+  slots[i].scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
+}
+/* accepts matching: a.k === null -> the event's own key rule applies;
+   a.k === ''   -> this reading is only right WITHOUT a key-change entry;
+   a.k === 'X'  -> only right together with key-change X. */
+function matchesAccept(e,f,enteredKey,nAttempts){
+  const accepts=e.accepts||[{f:canonFig(e.ans),k:null}];
+  for(const a of accepts){
+    if(a.f!==f) continue;
+    if(a.k===null||a.k===undefined){
+      if(!e.keyChange||enteredKey===e.keyChange||nAttempts>1) return true;
+    }else if(a.k===''){
+      if(!enteredKey) return true;
+    }else if(enteredKey===a.k) return true;
+  }
+  return false;
+}
+function commit(){
+  if(sel<0){msg('Select a slot first.');return;}
+  const g=currentParse();
+  if(!g){msg('Pick a numeral.');return;}
+  const e=DATA.events[sel], box=document.getElementById('box'+sel);
+  attempts[sel]=(attempts[sel]||0)+1;
+  if(matchesAccept(e,canonFig(g),state.key,attempts[sel])){
+    results[sel]=true;
+    slots[sel].className='slot ok';
+    box.innerHTML=rnHTML(e.ans, e.keyChange);
+    msg('Correct.','ok'); update();
+    const nxt=DATA.events.findIndex((_,j)=>j>sel && !(j in results));
+    if(nxt>=0) setTimeout(()=>select(nxt),350); else {sel=-1;cursor.style.display='none';}
+  }else{
+    slots[sel].classList.add('bad');
+    box.innerHTML=rnHTML(g, state.key||null);
+    if(attempts[sel]>=2){
+      results[sel]=false; slots[sel].className='slot bad revealed';
+      box.innerHTML=rnHTML(e.ans, e.keyChange);
+      msg(`Answer: ${e.figure}${e.keyChange?' (in '+e.keyChange.replace('-','♭')+')':''}`,'bad'); update();
+    }else{
+      msg('Not quite — one more try. Hold the slot to hear it again.','bad');
+    }
+  }
+}
+function update(){
+  const done=Object.keys(results).length;
+  document.getElementById('mprog').textContent=`${done}/${DATA?DATA.events.length:0}`;
+}
+
+/* ---------- audio unlock (iOS — SPEC.md pitfall 9) ----------
+   (a) The AudioContext must be created AND resumed synchronously inside a
+   user-gesture handler; doing it in the drone's 300ms hold-timer callback
+   leaves Safari-PWA audio permanently locked.
+   (b) WebAudio lives in iOS's "ambient" audio session, which the ring/silent
+   switch mutes (Bluetooth routing bypasses the switch — hence "works only
+   with Bluetooth"). A looping silent <audio> element promotes the session
+   to "playback", which ignores the switch. */
+const SILENT_WAV='data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YRAAAAAAAAAAAAAAAAAAAAAAAAAA';
+let AC=null, silentEl=null;
+function unlockAudio(){
+  if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
+  if(AC.state!=='running') AC.resume();
+  if(!silentEl){
+    const a=document.createElement('audio');
+    a.setAttribute('playsinline',''); a.loop=true; a.src=SILENT_WAV;
+    a.play().then(()=>{silentEl=a;}).catch(()=>{});
+  }
+}
+document.addEventListener('pointerdown',unlockAudio,true);
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden && AC && AC.state!=='running') AC.resume();
+});
+
+/* ---------- audio drone ---------- */
+let live=[];
+function startDrone(midis){
+  if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
+  if(AC.state==='suspended') AC.resume();
+  stopDrone(true);
+  const master=AC.createGain(); master.gain.value=0;
+  const lp=AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=2400;
+  master.connect(lp).connect(AC.destination);
+  midis.forEach(m=>{
+    const f=440*Math.pow(2,(m-69)/12);
+    [[1,'triangle',.55],[2,'sine',.22]].forEach(([mult,type,amp])=>{
+      const o=AC.createOscillator(),g=AC.createGain();
+      o.type=type;o.frequency.value=f*mult;g.gain.value=amp/midis.length;
+      o.connect(g).connect(master);o.start();live.push(o);
+    });
+  });
+  master.gain.linearRampToValueAtTime(.9,AC.currentTime+.04);
+  live.master=master;
+}
+function stopDrone(now){
+  if(live.master){
+    const m=live.master,t=AC.currentTime;
+    m.gain.cancelScheduledValues(t);m.gain.setValueAtTime(m.gain.value,t);
+    m.gain.linearRampToValueAtTime(0,t+(now?0.01:0.12));
+  }
+  const olds=live.slice();
+  setTimeout(()=>olds.forEach(o=>{try{o.stop()}catch(_){}}),now?20:160);
+  live=[];
+}
+
+/* ---------- full-piece playback (Milestone 2) ----------
+   Lookahead scheduler: a 25 ms tick schedules every note whose start falls
+   inside the next 120 ms at AudioContext time. Tempo is re-anchored on
+   slider input so changes take effect mid-playback. The slot x-mapping
+   doubles as a playhead: cursor x interpolates between adjacent onsets. */
+let ALL_NOTES=[], PIECE_END=0;
+function recomputeNotes(){
+  ALL_NOTES=DATA.parts.flatMap(p=>p.notes)
+    .filter(n=>n.midi!=null&&n.dur>0).sort((a,b)=>a.offset-b.offset);
+  PIECE_END=ALL_NOTES.reduce((m,n)=>Math.max(m,n.offset+n.dur),0);
+}
+const playBtn=document.getElementById('playbtn'),
+      tempoEl=document.getElementById('tempo'),
+      qpmEl=document.getElementById('qpm');
+let playing=false,curSpq=60/72,anchorQ=0,anchorT=0,schedIdx=0,
+    tickTimer=null,rafId=0,playMaster=null,userHold=false,phIdx=0;
+
+tempoEl.addEventListener('input',()=>{
+  qpmEl.textContent=tempoEl.value;
+  if(playing){ /* re-anchor so the new tempo applies from "now" */
+    const t=AC.currentTime,q=anchorQ+(t-anchorT)/curSpq;
+    anchorQ=q;anchorT=t;curSpq=60/+tempoEl.value;
+  }else curSpq=60/+tempoEl.value;
+});
+
+function playNote(midi,when,dur){
+  const f=440*Math.pow(2,(midi-69)/12);
+  [[1,'triangle',.16],[2,'sine',.06]].forEach(([mult,type,amp])=>{
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type=type;o.frequency.value=f*mult;
+    const rel=Math.max(.05,Math.min(.12,dur*.25));
+    g.gain.setValueAtTime(0,when);
+    g.gain.linearRampToValueAtTime(amp,when+.015);
+    g.gain.setValueAtTime(amp,Math.max(when+.015,when+dur-rel));
+    g.gain.linearRampToValueAtTime(.0001,when+dur);
+    o.connect(g).connect(playMaster);
+    o.start(when);o.stop(when+dur+.05);
+  });
+}
+function tick(){
+  const horizon=AC.currentTime+.12;
+  while(schedIdx<ALL_NOTES.length){
+    const n=ALL_NOTES[schedIdx];
+    const t=anchorT+(n.offset-anchorQ)*curSpq;
+    if(t>horizon)break;
+    const dur=n.dur*curSpq*(n.fermata?1.7:1);
+    if(t>AC.currentTime-.03)playNote(n.midi,Math.max(t,AC.currentTime),dur);
+    schedIdx++;
+  }
+  if(anchorQ+(AC.currentTime-anchorT)/curSpq>PIECE_END+1)stopPlayback();
+}
+function playheadX(q){
+  const xs=slots.map(s=>+s.dataset.x),offs=DATA.events.map(e=>e.offset);
+  if(q<=offs[0])return xs[0];
+  if(phIdx>=offs.length-1||offs[phIdx]>q)phIdx=0;
+  while(phIdx<offs.length-2&&offs[phIdx+1]<=q)phIdx++;
+  const o0=offs[phIdx],o1=offs[phIdx+1];
+  if(q>=o1)return xs[offs.length-1];
+  return xs[phIdx]+(xs[phIdx+1]-xs[phIdx])*(q-o0)/(o1-o0);
+}
+function raf(){
+  if(!playing)return;
+  const q=anchorQ+(AC.currentTime-anchorT)/curSpq;
+  const x=playheadX(q);
+  cursor.style.display='block';
+  cursor.style.left=x+'px';
+  cursor.style.height=slotsEl.offsetTop+'px';
+  if(!userHold)scroller.scrollLeft=x-scroller.clientWidth*.38;
+  rafId=requestAnimationFrame(raf);
+}
+function startPlayback(){
+  if(!DATA)return;
+  unlockAudio();
+  stopDrone(true);
+  playMaster=AC.createGain();playMaster.gain.value=.9;
+  const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=2400;
+  playMaster.connect(lp).connect(AC.destination);
+  const startQ=sel>=0?DATA.events[sel].offset:0;
+  anchorQ=startQ;anchorT=AC.currentTime+.06;
+  curSpq=60/+tempoEl.value;phIdx=0;
+  schedIdx=ALL_NOTES.findIndex(n=>n.offset>=startQ-1e-6);
+  if(schedIdx<0)schedIdx=ALL_NOTES.length;
+  playing=true;
+  playBtn.innerHTML='&#9632;';playBtn.classList.add('on');
+  tickTimer=setInterval(tick,25);tick();
+  rafId=requestAnimationFrame(raf);
+}
+function stopPlayback(){
+  if(!playing)return;
+  playing=false;clearInterval(tickTimer);cancelAnimationFrame(rafId);
+  if(playMaster){
+    const pm=playMaster,t=AC.currentTime;
+    pm.gain.setValueAtTime(pm.gain.value,t);
+    pm.gain.linearRampToValueAtTime(0,t+.08);
+    setTimeout(()=>pm.disconnect(),200);
+    playMaster=null;
+  }
+  playBtn.innerHTML='&#9654;';playBtn.classList.remove('on');
+  if(sel>=0)cursor.style.left=slots[sel].dataset.x+'px';
+  else cursor.style.display='none';
+}
+playBtn.onclick=()=>playing?stopPlayback():startPlayback();
+scroller.addEventListener('pointerdown',()=>{userHold=true;});
+scroller.addEventListener('pointerup',()=>{userHold=false;});
+scroller.addEventListener('pointercancel',()=>{userHold=false;});
+
+/* ---------- slot pointer handling: tap = select, hold = drone ---------- */
+function attachSlotHandlers(d,i){
+  let timer=null,droning=false,startX=0,startY=0;
+  d.addEventListener('pointerdown',ev=>{
+    startX=ev.clientX;startY=ev.clientY;droning=false;
+    timer=setTimeout(()=>{droning=true;d.classList.add('droning');
+                          startDrone(DATA.events[i].midi);},300);
+  });
+  d.addEventListener('pointermove',ev=>{
+    if(Math.abs(ev.clientX-startX)>12||Math.abs(ev.clientY-startY)>12){
+      clearTimeout(timer);
+      if(droning){stopDrone();d.classList.remove('droning');droning=false;}
+    }
+  });
+  const end=()=>{
+    clearTimeout(timer);
+    if(droning){stopDrone();d.classList.remove('droning');}
+    else select(i);
+  };
+  d.addEventListener('pointerup',end);
+  d.addEventListener('pointercancel',()=>{clearTimeout(timer);
+    if(droning){stopDrone();d.classList.remove('droning');}});
+}
+
+/* ---------- palette wiring (bound once) ---------- */
+document.querySelectorAll('#numrow button').forEach(b=>b.onclick=()=>{state.num=b.dataset.n;paint();});
+document.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{state.qual=b.dataset.q;state.maj=false;paint();});
+document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{state.figs=b.dataset.f;paint();});
+document.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{
+  state.acc=(state.acc===b.dataset.a)?'':b.dataset.a;paint();});
+document.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{
+  state.num=(state.num===b.dataset.x)?null:b.dataset.x;
+  state.figs='';state.maj=false;state.qual='';paint();});
+document.getElementById('majbtn').onclick=()=>{state.maj=!state.maj;paint();};
+document.getElementById('extrabtn').onclick=()=>{
+  document.getElementById('extrarow').classList.toggle('show');};
+document.getElementById('secbtn').onclick=()=>{
+  document.getElementById('secrow').classList.toggle('show');
+  document.getElementById('keyrow').classList.remove('show');};
+document.getElementById('keybtn').onclick=()=>{
+  document.getElementById('keyrow').classList.toggle('show');
+  document.getElementById('secrow').classList.remove('show');};
+document.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{state.sec=b.dataset.s;
+  document.getElementById('secrow').classList.remove('show');paint();});
+document.getElementById('clearbtn').onclick=resetState;
+document.getElementById('enterbtn').onclick=commit;
+
+/* ---------- init ---------- */
+init();
+</script>
 </body>
 </html>
