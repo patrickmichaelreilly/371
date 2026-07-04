@@ -20,27 +20,30 @@
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
   html,body{height:100%}
   body{background:var(--paper);color:var(--ink);font-family:var(--serif);
-       display:flex;flex-direction:column;overflow:hidden}
+       display:flex;flex-direction:column;overflow:hidden;
+       user-select:none;-webkit-user-select:none}
 
   header{padding:8px 16px 6px;border-bottom:1px solid var(--rule);flex:none}
-  #headrow{display:flex;align-items:baseline;gap:10px}
-  header h1{font-size:15px;font-weight:600;font-style:italic;letter-spacing:.01em;
-            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
-  #pick{font-family:var(--sans);font-size:11px;color:var(--ink);background:transparent;
-        border:1px solid var(--rule);border-radius:4px;padding:2px 4px;max-width:44vw}
+  #pickwrap{position:relative;display:flex;align-items:baseline;min-width:0}
+  #pickwrap::after{content:'▾';font-size:11px;color:var(--ink-soft);
+                   margin-left:6px;pointer-events:none}
+  #pick{font-family:var(--serif);font-size:15px;font-weight:600;font-style:italic;
+        letter-spacing:.01em;color:var(--ink);background:transparent;border:none;
+        appearance:none;-webkit-appearance:none;padding:0;flex:0 1 auto;min-width:0;
+        max-width:calc(100vw - 60px);text-overflow:ellipsis;white-space:nowrap;
+        overflow:hidden;cursor:pointer}
   .meta{display:flex;gap:14px;margin-top:2px;font-family:var(--sans);font-size:10.5px;
         text-transform:uppercase;letter-spacing:.12em;color:var(--ink-soft);align-items:center}
   .meta b{color:var(--ink)}
-  #modebtn{cursor:pointer;color:var(--ink);font-weight:700;text-decoration:underline;
-           background:none;border:none;font:inherit;letter-spacing:inherit;
-           text-transform:inherit;padding:0}
+  #resetbtn{cursor:pointer;color:var(--ink-soft);text-decoration:underline;
+            background:none;border:none;font:inherit;letter-spacing:inherit;
+            text-transform:inherit;padding:0}
   #space{width:70px;accent-color:var(--ink);height:14px}
 
   /* ---- scroll region: staff + slots ---- */
   #scroller{flex:1 1 auto;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;
             position:relative;background:
             linear-gradient(var(--paper) 0%, var(--paper-deep) 100%)}
-  body.conveyor #scroller{touch-action:none}
   #content{position:relative;height:100%;min-width:100%}
   #staff{padding:8px 24px 0}
   #staff svg{height:min(46vh,300px);width:auto;display:block}
@@ -56,7 +59,6 @@
   .slot{position:absolute;transform:translateX(-50%);min-width:36px;height:64px;
         display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
         cursor:pointer;user-select:none;-webkit-user-select:none}
-  body.conveyor .slot{pointer-events:none}
   .slot .tick{width:1px;height:8px;background:var(--rule)}
   .slot .box{min-width:34px;padding:2px 5px;height:34px;display:flex;align-items:center;
         justify-content:center;border-bottom:1.5px solid var(--rule);font-size:17px;
@@ -112,14 +114,13 @@
 </head>
 <body>
 <header>
-  <div id="headrow">
-    <h1 id="title">Loading…</h1>
+  <div id="pickwrap">
     <select id="pick" aria-label="choose chorale"></select>
   </div>
   <div class="meta">
     <span>Key <b id="mkey">–</b></span>
     <span>Progress <b id="mprog">0/0</b></span>
-    <span><button id="modebtn">conveyor</button></span>
+    <span><button id="resetbtn">reset</button></span>
     <span style="margin-left:auto;display:flex;align-items:center;gap:5px">Spacing
       <input id="space" type="range" min="0" max="100" value="50">
     </span>
@@ -347,18 +348,41 @@ function setup(data){
   none.onclick=()=>{state.key='';keyrow.classList.remove('show');paint();};
   keyrow.appendChild(none);
   /* header */
-  document.getElementById('title').textContent=
-    `${DATA.riemenschneider} · ${DATA.title||''}`;
   const k0=DATA.events[0].key;
   document.getElementById('mkey').textContent=
     k0.replace('-','♭')+(k0[0]===k0[0].toLowerCase()?' minor':' major');
+  /* restore saved progress (Milestone: persistence) */
+  try{
+    const s=JSON.parse(localStorage.getItem('prog:'+DATA.riemenschneider));
+    if(s){
+      results=s.r||{}; attempts=s.a||{};
+      for(const k of Object.keys(results)){
+        const i=+k, e=DATA.events[i], d=slots[i];
+        if(!e||!d) continue;
+        d.className=results[k]?'slot ok':'slot bad revealed';
+        document.getElementById('box'+i).innerHTML=rnHTML(e.ans,e.keyChange);
+      }
+    }
+  }catch(_){}
   update(); resetState();
   msg('Select a chord slot to begin.');
   recomputeNotes();
   scroller.scrollLeft=0;
   renderScore(true).then(()=>{
-    if(mode==='conveyor'){const n=firstUnanswered(); if(n>=0)select(n);}
+    const n=firstUnanswered();
+    if(n>=0)select(n); else msg('Chorale complete.','ok');
   });
+}
+
+function saveProgress(){
+  localStorage.setItem('prog:'+DATA.riemenschneider,
+                       JSON.stringify({r:results,a:attempts}));
+  if(Object.keys(results).length===DATA.events.length)
+    markDone(DATA.riemenschneider);
+}
+function markDone(riem){
+  const o=pick.querySelector(`option[value="${riem}"]`);
+  if(o&&!o.textContent.startsWith('✓')) o.textContent='✓ '+o.textContent;
 }
 
 async function loadChorale(riem){
@@ -379,7 +403,13 @@ async function init(){
   catch(e){ msg('Could not load chorale list — '+e.message,'bad'); return; }
   manifest.forEach(m=>{
     const o=document.createElement('option');
-    o.value=m.riem; o.textContent=`${m.riem} · ${m.title||''}`;
+    o.value=m.riem;
+    let done=false;
+    try{
+      const s=JSON.parse(localStorage.getItem('prog:'+m.riem));
+      done=s&&Object.keys(s.r||{}).length>=m.events;
+    }catch(_){}
+    o.textContent=`${done?'✓ ':''}${m.riem} · ${m.title||''}`;
     pick.appendChild(o);
   });
   pick.onchange=()=>loadChorale(+pick.value);
@@ -429,21 +459,17 @@ spaceEl.addEventListener('input',()=>{
 });
 spaceEl.value=localStorage.getItem('space')||'50';
 
-/* ---------- mode: conveyor (app owns advancement) vs browse ---------- */
-let mode=localStorage.getItem('mode')||
-         (matchMedia('(pointer:coarse)').matches?'conveyor':'browse');
-const modeBtn=document.getElementById('modebtn');
-function setMode(m){
-  mode=m; localStorage.setItem('mode',m);
-  document.body.classList.toggle('conveyor',m==='conveyor');
-  modeBtn.textContent=m;
-  if(m==='conveyor'&&DATA&&sel<0){const n=firstUnanswered(); if(n>=0)select(n);}
-}
-modeBtn.onclick=()=>setMode(mode==='conveyor'?'browse':'conveyor');
 function firstUnanswered(){
   if(!DATA) return -1;
   return DATA.events.findIndex((_,j)=>!(j in results));
 }
+document.getElementById('resetbtn').onclick=()=>{
+  if(!DATA) return;
+  localStorage.removeItem('prog:'+DATA.riemenschneider);
+  const o=pick.querySelector(`option[value="${DATA.riemenschneider}"]`);
+  if(o) o.textContent=o.textContent.replace(/^✓ /,'');
+  setup(DATA);
+};
 
 /* ---------- entry state ---------- */
 const state={num:null,qual:'M',figs:'',sec:'',key:'',acc:'',maj:false};
@@ -517,7 +543,7 @@ function commit(){
   const e=DATA.events[sel], box=document.getElementById('box'+sel);
   attempts[sel]=(attempts[sel]||0)+1;
   if(matchesAccept(e,canonFig(g),state.key,attempts[sel])){
-    results[sel]=true;
+    results[sel]=true; saveProgress();
     slots[sel].className='slot ok';
     box.innerHTML=rnHTML(e.ans, e.keyChange);
     msg('Correct.','ok'); update();
@@ -526,11 +552,13 @@ function commit(){
     slots[sel].classList.add('bad');
     box.innerHTML=rnHTML(g, state.key||null);
     if(attempts[sel]>=2){
-      results[sel]=false; slots[sel].className='slot bad revealed';
+      results[sel]=false; saveProgress();
+      slots[sel].className='slot bad revealed';
       box.innerHTML=rnHTML(e.ans, e.keyChange);
       msg(`Answer: ${e.figure}${e.keyChange?' (in '+e.keyChange.replace('-','♭')+')':''}`,'bad'); update();
-      if(mode==='conveyor') setTimeout(advance,1100);
+      setTimeout(advance,1100);
     }else{
+      saveProgress();
       msg('Not quite — one more try. Hold to hear it again.','bad');
     }
   }
@@ -600,11 +628,55 @@ function stopDrone(now){
    inside the next 120 ms at AudioContext time. Tempo is re-anchored on
    slider input so changes take effect mid-playback. The slot x-mapping
    doubles as a playhead: cursor x interpolates between adjacent onsets. */
-let ALL_NOTES=[], PIECE_END=0;
+/* Fermata handling: held beats are stretched in PERFORMANCE time — a
+   piecewise-linear map of notated quarters. Each fermata beat is dilated
+   by FERMATA_MULT, which both lengthens the held notes and delays
+   everything after them (no overlap into the next phrase). The scheduler
+   runs entirely in performance quarters; the playhead maps back to
+   notated quarters for slot interpolation. */
+const FERMATA_MULT=1.7;
+let ALL_NOTES=[], PLAY_NOTES=[], PIECE_END=0, PERF_SEGS=[];
+function buildPerfMap(notes){
+  const holds={};
+  for(const n of notes) if(n.fermata)
+    holds[n.offset]=Math.max(holds[n.offset]||0,n.dur);
+  const spans=[];
+  for(const o of Object.keys(holds).map(Number).sort((a,b)=>a-b)){
+    const e=o+holds[o], last=spans[spans.length-1];
+    if(last&&o<last[1]) last[1]=Math.max(last[1],e);
+    else spans.push([o,e]);
+  }
+  PERF_SEGS=[];
+  let orig=0,perf=0;
+  for(const [s,e] of spans){
+    if(s>orig){PERF_SEGS.push({o0:orig,o1:s,p0:perf,p1:perf+(s-orig)});
+               perf+=s-orig;orig=s;}
+    const d=(e-s)*FERMATA_MULT;
+    PERF_SEGS.push({o0:s,o1:e,p0:perf,p1:perf+d});
+    perf+=d;orig=e;
+  }
+  PERF_SEGS.push({o0:orig,o1:Infinity,p0:perf,p1:Infinity});
+}
+function perfQ(q){
+  for(const g of PERF_SEGS)
+    if(q<=g.o1)
+      return g.p0+(q-g.o0)*(g.o1===Infinity?1:(g.p1-g.p0)/(g.o1-g.o0));
+  return q;
+}
+function invPerfQ(p){
+  for(const g of PERF_SEGS)
+    if(p<=g.p1)
+      return g.o0+(p-g.p0)*(g.p1===Infinity?1:(g.o1-g.o0)/(g.p1-g.p0));
+  return p;
+}
 function recomputeNotes(){
   ALL_NOTES=DATA.parts.flatMap(p=>p.notes)
     .filter(n=>n.midi!=null&&n.dur>0).sort((a,b)=>a.offset-b.offset);
-  PIECE_END=ALL_NOTES.reduce((m,n)=>Math.max(m,n.offset+n.dur),0);
+  buildPerfMap(ALL_NOTES);
+  PLAY_NOTES=ALL_NOTES.map(n=>({midi:n.midi,offset:perfQ(n.offset),
+    dur:perfQ(n.offset+n.dur)-perfQ(n.offset)}))
+    .sort((a,b)=>a.offset-b.offset);
+  PIECE_END=PLAY_NOTES.reduce((m,n)=>Math.max(m,n.offset+n.dur),0);
 }
 const playBtn=document.getElementById('playbtn'),
       tempoEl=document.getElementById('tempo'),
@@ -636,11 +708,11 @@ function playNote(midi,when,dur){
 }
 function tick(){
   const horizon=AC.currentTime+.12;
-  while(schedIdx<ALL_NOTES.length){
-    const n=ALL_NOTES[schedIdx];
+  while(schedIdx<PLAY_NOTES.length){
+    const n=PLAY_NOTES[schedIdx];
     const t=anchorT+(n.offset-anchorQ)*curSpq;
     if(t>horizon)break;
-    const dur=n.dur*curSpq*(n.fermata?1.7:1);
+    const dur=n.dur*curSpq;
     if(t>AC.currentTime-.03)playNote(n.midi,Math.max(t,AC.currentTime),dur);
     schedIdx++;
   }
@@ -657,8 +729,8 @@ function playheadX(q){
 }
 function raf(){
   if(!playing)return;
-  const q=anchorQ+(AC.currentTime-anchorT)/curSpq;
-  const x=playheadX(q);
+  const q=anchorQ+(AC.currentTime-anchorT)/curSpq;   /* performance quarters */
+  const x=playheadX(invPerfQ(q));                    /* -> notated quarters */
   cursor.style.display='block';
   cursor.style.left=x+'px';
   cursor.style.height=slotsEl.offsetTop+'px';
@@ -672,11 +744,11 @@ function startPlayback(){
   playMaster=AC.createGain();playMaster.gain.value=.9;
   const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=2400;
   playMaster.connect(lp).connect(AC.destination);
-  const startQ=sel>=0?DATA.events[sel].offset:0;
+  const startQ=sel>=0?perfQ(DATA.events[sel].offset):0;
   anchorQ=startQ;anchorT=AC.currentTime+.06;
   curSpq=60/+tempoEl.value;phIdx=0;
-  schedIdx=ALL_NOTES.findIndex(n=>n.offset>=startQ-1e-6);
-  if(schedIdx<0)schedIdx=ALL_NOTES.length;
+  schedIdx=PLAY_NOTES.findIndex(n=>n.offset>=startQ-1e-6);
+  if(schedIdx<0)schedIdx=PLAY_NOTES.length;
   playing=true;
   playBtn.innerHTML='&#9632;';playBtn.classList.add('on');
   tickTimer=setInterval(tick,25);tick();
@@ -762,7 +834,6 @@ document.getElementById('clearbtn').onclick=resetState;
 document.getElementById('enterbtn').onclick=commit;
 
 /* ---------- init ---------- */
-setMode(mode);
 init();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
