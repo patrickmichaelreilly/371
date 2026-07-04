@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Chorale Analysis — BWV 269</title>
+<style>
+  :root{
+    --paper:#F6F1E4; --paper-deep:#EFE7D3; --ink:#211C14; --ink-soft:#5C5342;
+    --rule:#C9BC9E; --red:#A93226; --green:#3E6B4A; --amber:rgba(196,148,42,.28);
+    --serif:'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+    --sans:ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{background:var(--paper);color:var(--ink);font-family:var(--serif);
+       display:flex;flex-direction:column;overflow:hidden}
+
+  header{padding:10px 16px 6px;border-bottom:1px solid var(--rule);flex:none}
+  header h1{font-size:15px;font-weight:600;font-style:italic;letter-spacing:.01em}
+  .meta{display:flex;gap:14px;margin-top:2px;font-family:var(--sans);font-size:10.5px;
+        text-transform:uppercase;letter-spacing:.12em;color:var(--ink-soft)}
+  .meta b{color:var(--ink)}
+
+  /* ---- scroll region: staff + slots ---- */
+  #scroller{flex:1 1 auto;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;
+            position:relative;background:
+            linear-gradient(var(--paper) 0%, var(--paper-deep) 100%)}
+  #content{position:relative;height:100%;min-width:100%}
+  #staff{padding:8px 24px 0}
+  .svgvar{display:none}
+  .svgvar.on{display:block}
+  #staff svg{height:min(46vh,300px);width:auto;display:block}
+  .sp{cursor:pointer;font-weight:400;color:var(--ink-soft);padding:0 2px}
+  .sp.on{color:var(--ink);font-weight:700;text-decoration:underline}
+  #staff svg *{color:var(--ink)}
+
+  #cursor{position:absolute;top:0;width:2px;background:var(--amber);
+          box-shadow:0 0 0 6px var(--amber);pointer-events:none;display:none}
+
+  #slots{position:absolute;left:0;right:0;height:74px;top:calc(min(46vh,300px) + 14px)}
+  .slot{position:absolute;transform:translateX(-50%);min-width:36px;height:64px;
+        display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+        cursor:pointer;user-select:none;-webkit-user-select:none}
+  .slot .tick{width:1px;height:8px;background:var(--rule)}
+  .slot .box{min-width:34px;padding:2px 5px;height:34px;display:flex;align-items:center;
+        justify-content:center;border-bottom:1.5px solid var(--rule);font-size:17px;
+        color:var(--ink);white-space:nowrap}
+  .slot .mb{font-family:var(--sans);font-size:8.5px;color:var(--ink-soft);margin-top:2px;
+        letter-spacing:.05em}
+  .slot.sel .box{border-bottom-color:var(--ink);background:var(--amber)}
+  .slot.ok .box{border-bottom-color:var(--green);color:var(--green)}
+  .slot.bad .box{border-bottom-color:var(--red);color:var(--red)}
+  .slot.revealed .box{color:var(--red);font-style:italic}
+  .slot.droning .box{background:var(--amber)}
+
+  /* stacked theory typography */
+  .rn{display:inline-flex;align-items:baseline;line-height:1}
+  .rn .num{font-size:1em;letter-spacing:.02em}
+  .rn .qual{font-size:.72em;transform:translateY(-.45em)}
+  .rn .figs{display:inline-flex;flex-direction:column;justify-content:center;
+            font-size:.58em;line-height:1.05;margin-left:1.5px;transform:translateY(-.1em)}
+  .rn .sec{font-size:.85em;margin-left:1px}
+  .rn .keych{font-size:.8em;margin-right:3px;color:var(--ink-soft)}
+
+  /* ---- palette ---- */
+  #palette{flex:none;border-top:1px solid var(--rule);background:var(--paper);
+           padding:8px 10px calc(10px + env(safe-area-inset-bottom));font-family:var(--sans)}
+  #preview{display:flex;align-items:center;gap:12px;margin-bottom:8px;min-height:34px}
+  #ptoken{font-family:var(--serif);font-size:26px;min-width:70px}
+  #pmsg{font-size:11px;color:var(--ink-soft);letter-spacing:.04em}
+  #pmsg.bad{color:var(--red)} #pmsg.ok{color:var(--green)}
+  .prow{display:flex;gap:5px;margin-bottom:5px}
+  .prow button{flex:1;height:38px;border:1px solid var(--rule);border-radius:4px;
+        background:transparent;color:var(--ink);font-family:var(--serif);font-size:16px;
+        cursor:pointer}
+  .prow button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  .prow button.util{font-family:var(--sans);font-size:11px;letter-spacing:.08em;
+        text-transform:uppercase}
+  .prow button.go{background:var(--green);border-color:var(--green);color:#fff}
+  .prow button:disabled{opacity:.35;cursor:default}
+  #secrow,#keyrow{display:none}
+  #secrow.show,#keyrow.show{display:flex}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+  <div class="meta">
+    <span>Key <b id="mkey"></b></span>
+    <span>Phrases <b id="mphr"></b></span>
+    <span>Progress <b id="mprog">0/0</b></span>
+    <span style="margin-left:auto">Spacing
+      <b class="sp" data-l="0">tight</b><b class="sp" data-l="1">med</b><b class="sp" data-l="2">wide</b>
+    </span>
+    <span id="mhint">tap a slot · hold to hear</span>
+  </div>
+</header>
+
+<div id="scroller">
+  <div id="content">
+    <div id="staff">
+      <div class="svgvar" data-l="0">__SVG0__</div>
+      <div class="svgvar" data-l="1">__SVG1__</div>
+      <div class="svgvar" data-l="2">__SVG2__</div>
+    </div>
+    <div id="cursor"></div>
+    <div id="slots"></div>
+  </div>
+</div>
+
+<div id="palette">
+  <div id="preview">
+    <span id="ptoken">&nbsp;</span>
+    <span id="pmsg">Select a chord slot to begin.</span>
+  </div>
+  <div class="prow" id="numrow">
+    <button data-n="I">I</button><button data-n="II">II</button><button data-n="III">III</button>
+    <button data-n="IV">IV</button><button data-n="V">V</button><button data-n="VI">VI</button>
+    <button data-n="VII">VII</button>
+  </div>
+  <div class="prow">
+    <button data-q="M" class="util">Maj</button>
+    <button data-q="m" class="util">min</button>
+    <button data-q="o">°</button>
+    <button data-q="%">ø</button>
+    <button data-q="+">+</button>
+    <button id="keybtn" class="util">Key:</button>
+    <button id="secbtn" class="util">/x</button>
+  </div>
+  <div class="prow">
+    <button data-f="">5/3</button><button data-f="6">6</button><button data-f="64">6·4</button>
+    <button data-f="7">7</button><button data-f="65">6·5</button><button data-f="43">4·3</button>
+    <button data-f="42">4·2</button>
+  </div>
+  <div class="prow" id="secrow">
+    <button data-s="ii">/ii</button><button data-s="iii">/iii</button><button data-s="IV">/IV</button>
+    <button data-s="V">/V</button><button data-s="vi">/vi</button><button data-s="vii">/vii</button>
+    <button data-s="" class="util">none</button>
+  </div>
+  <div class="prow" id="keyrow">
+    <button data-k="C">C</button><button data-k="G">G</button><button data-k="D">D</button>
+    <button data-k="a">a</button><button data-k="e">e</button><button data-k="b">b</button>
+    <button data-k="" class="util">none</button>
+  </div>
+  <div class="prow">
+    <button id="clearbtn" class="util">Clear</button>
+    <button id="enterbtn" class="go util">Enter</button>
+  </div>
+</div>
+
+<script>
+const DATA = __DATA__;
+
+/* ---------- answer parsing & normalization ---------- */
+const NUMRE = /^(b|#)?(VII|VI|IV|III|II|V|I|vii|vi|iv|iii|ii|v|i)(o|°|ø|\+)?((?:\d+\/?)*)(?:\/(b|#)?(VII|VI|IV|III|II|V|I|vii|vi|iv|iii|ii|v|i))?$/;
+function parseFig(fig){
+  const m = fig.match(NUMRE);
+  if(!m) return null;
+  let figs = (m[4]||'').replace(/\//g,'');
+  if(figs==='53') figs='';
+  let q = m[3]||''; if(q==='°') q='o';
+  return {acc:m[1]||'', num:m[2], qual:q, figs, secAcc:m[5]||'', sec:m[6]||''};
+}
+function sameRN(a,b){
+  if(!a||!b) return false;
+  return a.num===b.num && a.qual===b.qual && a.figs===b.figs
+      && a.sec.toLowerCase()===(b.sec||'').toLowerCase() && a.acc===b.acc;
+}
+/* pre-parse answers; keyChange = first event of a new key region */
+let prevKey=null;
+DATA.events.forEach(e=>{
+  e.ans = parseFig(e.figure);
+  e.keyChange = (prevKey!==null && e.key!==prevKey) ? e.key : null;
+  prevKey = e.key;
+});
+
+/* ---------- render helpers: stacked theory typography ---------- */
+function rnHTML(p, keych){
+  if(!p) return '&nbsp;';
+  const qmap = {o:'°','%':'ø','+':'+'};
+  let h = '<span class="rn">';
+  if(keych) h += `<span class="keych">${keych}:</span>`;
+  h += `<span class="num">${p.acc}${p.num}</span>`;
+  if(p.qual) h += `<span class="qual">${qmap[p.qual]||p.qual}</span>`;
+  if(p.figs){
+    const stack = p.figs.match(/\d/g).map(d=>`<span>${d}</span>`).join('');
+    h += `<span class="figs">${stack}</span>`;
+  }
+  if(p.sec) h += `<span class="sec">/${p.secAcc||''}${p.sec}</span>`;
+  return h+'</span>';
+}
+
+/* ---------- build slots aligned to SVG note elements ---------- */
+const scroller=document.getElementById('scroller'),
+      content=document.getElementById('content'),
+      slotsEl=document.getElementById('slots'),
+      cursor=document.getElementById('cursor');
+const slots=[];
+let level=1;
+function layout(){
+  document.querySelectorAll('.svgvar').forEach(v=>v.classList.toggle('on',+v.dataset.l===level));
+  document.querySelectorAll('.sp').forEach(b=>b.classList.toggle('on',+b.dataset.l===level));
+  const svg=document.querySelector('.svgvar.on svg');
+  const cRect=content.getBoundingClientRect(), sRect=svg.getBoundingClientRect();
+  DATA.events.forEach((e,i)=>{
+    const nh=svg.querySelector('#'+CSS.escape(DATA.noteids[level][i])+' .notehead');
+    if(!nh) return;
+    const r=nh.getBoundingClientRect();
+    const x=r.left + r.width/2 - cRect.left;
+    slots[i].style.left=x+'px';
+    slots[i].dataset.x=x;
+  });
+  content.style.width=(sRect.width+240)+'px';
+  if(sel>=0)cursor.style.left=slots[sel].dataset.x+'px';
+}
+document.querySelectorAll('.sp').forEach(b=>b.onclick=()=>{level=+b.dataset.l;layout();});
+DATA.events.forEach((e,i)=>{
+  const d=document.createElement('div');
+  d.className='slot'; d.dataset.i=i;
+  d.innerHTML=`<div class="tick"></div><div class="box" id="box${i}">&nbsp;</div>
+               <div class="mb">m${e.measure}·${(''+e.beat).replace('.5','½')}</div>`;
+  slotsEl.appendChild(d); slots.push(d);
+});
+window.addEventListener('resize',layout);
+requestAnimationFrame(layout);
+
+/* ---------- state ---------- */
+let sel=-1, attempts={}, results={};
+const state={num:null,qual:'M',figs:'',sec:'',key:''};
+function resetState(){state.num=null;state.qual='M';state.figs='';state.sec='';state.key='';paint();}
+function currentParse(){
+  if(!state.num) return null;
+  const lower = (state.qual==='m'||state.qual==='o'||state.qual==='%');
+  const qual = (state.qual==='o'||state.qual==='%'||state.qual==='+')? state.qual:'';
+  return {acc:'', num: lower? state.num.toLowerCase(): state.num,
+          qual, figs:state.figs, secAcc:'', sec:state.sec};
+}
+function paint(){
+  document.querySelectorAll('#numrow button').forEach(b=>b.classList.toggle('on',b.dataset.n===state.num));
+  document.querySelectorAll('[data-q]').forEach(b=>b.classList.toggle('on',b.dataset.q===state.qual));
+  document.querySelectorAll('[data-f]').forEach(b=>b.classList.toggle('on',b.dataset.f===state.figs));
+  document.querySelectorAll('[data-s]').forEach(b=>b.classList.toggle('on',b.dataset.s===state.sec&&state.sec!==''));
+  document.querySelectorAll('[data-k]').forEach(b=>b.classList.toggle('on',b.dataset.k===state.key&&state.key!==''));
+  document.getElementById('ptoken').innerHTML=rnHTML(currentParse(),state.key||null);
+}
+function msg(t,cls){const m=document.getElementById('pmsg');m.textContent=t;m.className=cls||'';}
+
+/* ---------- selection, grading ---------- */
+function select(i){
+  if(sel>=0) slots[sel].classList.remove('sel');
+  sel=i; slots[i].classList.add('sel');
+  const e=DATA.events[i];
+  resetState();
+  msg(`m${e.measure} beat ${e.beat} — enter the numeral`+(e.keyChange?'  (a key change happens near here…)':''));
+  cursor.style.display='block';
+  cursor.style.left=slots[i].dataset.x+'px';
+  cursor.style.height=(slotsEl.offsetTop)+'px';
+  slots[i].scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
+}
+function commit(){
+  if(sel<0){msg('Select a slot first.');return;}
+  const g=currentParse();
+  if(!g){msg('Pick a numeral.');return;}
+  const e=DATA.events[sel], box=document.getElementById('box'+sel);
+  attempts[sel]=(attempts[sel]||0)+1;
+  const okKey = !e.keyChange || state.key===e.keyChange || attempts[sel]>1;
+  if(sameRN(g,e.ans) && okKey){
+    results[sel]=true;
+    slots[sel].className='slot ok';
+    box.innerHTML=rnHTML(e.ans, e.keyChange);
+    msg('Correct.','ok'); update();
+    const nxt=DATA.events.findIndex((_,j)=>j>sel && !results[j]);
+    if(nxt>=0) setTimeout(()=>select(nxt),350); else {sel=-1;cursor.style.display='none';}
+  }else{
+    slots[sel].classList.add('bad');
+    box.innerHTML=rnHTML(g, state.key||null);
+    if(attempts[sel]>=2){
+      results[sel]=false; slots[sel].className='slot bad revealed';
+      box.innerHTML=rnHTML(e.ans, e.keyChange);
+      msg(`Answer: ${e.figure}${e.keyChange?' (in '+e.keyChange+')':''}`,'bad'); update();
+    }else{
+      msg('Not quite — one more try. Hold the slot to hear it again.','bad');
+    }
+  }
+}
+function update(){
+  const done=Object.keys(results).length;
+  document.getElementById('mprog').textContent=`${done}/${DATA.events.length}`;
+}
+
+/* ---------- audio drone ---------- */
+let AC=null, live=[];
+function startDrone(midis){
+  if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
+  if(AC.state==='suspended') AC.resume();
+  stopDrone(true);
+  const master=AC.createGain(); master.gain.value=0;
+  const lp=AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=2400;
+  master.connect(lp).connect(AC.destination);
+  midis.forEach(m=>{
+    const f=440*Math.pow(2,(m-69)/12);
+    [[1,'triangle',.55],[2,'sine',.22]].forEach(([mult,type,amp])=>{
+      const o=AC.createOscillator(),g=AC.createGain();
+      o.type=type;o.frequency.value=f*mult;g.gain.value=amp/midis.length;
+      o.connect(g).connect(master);o.start();live.push(o);
+    });
+  });
+  master.gain.linearRampToValueAtTime(.9,AC.currentTime+.04);
+  live.master=master;
+}
+function stopDrone(now){
+  if(live.master){
+    const m=live.master,t=AC.currentTime;
+    m.gain.cancelScheduledValues(t);m.gain.setValueAtTime(m.gain.value,t);
+    m.gain.linearRampToValueAtTime(0,t+(now?0.01:0.12));
+  }
+  const olds=live.slice();
+  setTimeout(()=>olds.forEach(o=>{try{o.stop()}catch(_){}}),now?20:160);
+  live=[];
+}
+
+/* ---------- slot pointer handling: tap = select, hold = drone ---------- */
+slots.forEach((d,i)=>{
+  let timer=null,droning=false,startX=0,startY=0;
+  d.addEventListener('pointerdown',ev=>{
+    startX=ev.clientX;startY=ev.clientY;droning=false;
+    timer=setTimeout(()=>{droning=true;d.classList.add('droning');
+                          startDrone(DATA.events[i].midi);},300);
+  });
+  d.addEventListener('pointermove',ev=>{
+    if(Math.abs(ev.clientX-startX)>12||Math.abs(ev.clientY-startY)>12){
+      clearTimeout(timer);
+      if(droning){stopDrone();d.classList.remove('droning');droning=false;}
+    }
+  });
+  const end=()=>{
+    clearTimeout(timer);
+    if(droning){stopDrone();d.classList.remove('droning');}
+    else select(i);
+  };
+  d.addEventListener('pointerup',end);
+  d.addEventListener('pointercancel',()=>{clearTimeout(timer);
+    if(droning){stopDrone();d.classList.remove('droning');}});
+});
+
+/* ---------- palette wiring ---------- */
+document.querySelectorAll('#numrow button').forEach(b=>b.onclick=()=>{state.num=b.dataset.n;paint();});
+document.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{state.qual=b.dataset.q;paint();});
+document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{state.figs=b.dataset.f;paint();});
+document.getElementById('secbtn').onclick=()=>{
+  document.getElementById('secrow').classList.toggle('show');
+  document.getElementById('keyrow').classList.remove('show');};
+document.getElementById('keybtn').onclick=()=>{
+  document.getElementById('keyrow').classList.toggle('show');
+  document.getElementById('secrow').classList.remove('show');};
+document.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{state.sec=b.dataset.s;
+  document.getElementById('secrow').classList.remove('show');paint();});
+document.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{state.key=b.dataset.k;
+  document.getElementById('keyrow').classList.remove('show');paint();});
+document.getElementById('clearbtn').onclick=resetState;
+document.getElementById('enterbtn').onclick=commit;
+
+/* ---------- init ---------- */
+document.getElementById('title').textContent=DATA.title;
+document.getElementById('mkey').textContent=DATA.events[0].key+' major';
+document.getElementById('mphr').textContent=DATA.numPhrases;
+update();
+</script>
+</body>
+</html>
