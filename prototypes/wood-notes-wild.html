@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wood Notes Wild — Notation Player</title>
+<link href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#fdfcf8; --ink:#1b1a17; --rule:#b9b2a4;
+    --blue:#3e5f7a; --blue-deep:#2b4458; --faded:#6d675c;
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--paper);color:var(--ink);font:17px/1.6 Georgia,'Times New Roman',serif;
+       max-width:680px;margin:0 auto;padding:2.5rem 1.25rem 5rem}
+  header{text-align:center;border-bottom:3px double var(--ink);padding-bottom:1.4rem;margin-bottom:2rem}
+  h1{font-family:'IM Fell English',serif;font-weight:400;font-size:2.4rem;letter-spacing:.02em}
+  .sub{font-family:'IM Fell English SC',serif;font-size:.95rem;letter-spacing:.28em;color:var(--faded);margin-top:.35rem}
+  .credit{font-style:italic;color:var(--faded);font-size:.85rem;margin-top:.6rem}
+
+  /* global controls */
+  .controls{display:flex;flex-wrap:wrap;gap:1rem 1.5rem;align-items:center;justify-content:center;
+            border:1px solid var(--rule);padding:1rem 1.2rem;margin-bottom:2.2rem;background:#f7f5ee}
+  .ctl{display:flex;flex-direction:column;gap:.25rem;font-size:.75rem;letter-spacing:.12em;
+       text-transform:uppercase;color:var(--faded)}
+  .ctl output{font-family:var(--mono);color:var(--ink);font-size:.85rem;letter-spacing:0;text-transform:none}
+  input[type=range]{accent-color:var(--blue);width:130px}
+  select{font:inherit;font-size:.9rem;padding:.15rem .3rem;border:1px solid var(--rule);background:var(--paper)}
+
+  /* figure cards — Cheney caption signature */
+  .fig{margin-bottom:2.4rem}
+  .fig-head{display:flex;align-items:baseline;gap:.7rem;margin-bottom:.15rem}
+  .fig-no{font-family:'IM Fell English',serif;font-size:1.3rem}
+  .fig-bird{font-family:'IM Fell English SC',serif;letter-spacing:.2em;font-size:1.05rem}
+  .fig-latin{font-style:italic;color:var(--faded);font-size:.85rem}
+  .staffline{border-top:1px solid var(--rule);margin:.4rem 0 .55rem}
+  .lyric{text-align:center;font-family:'IM Fell English SC',serif;letter-spacing:.22em;
+         font-size:.9rem;color:var(--blue-deep);margin:.3rem 0 .6rem}
+  .enc{font-family:var(--mono);font-size:.82rem;background:#f2efe7;border:1px solid var(--rule);
+       padding:.55rem .7rem;white-space:pre-wrap;word-break:break-word}
+  .row{display:flex;gap:.7rem;align-items:center;margin-top:.6rem}
+  button{font-family:'IM Fell English SC',serif;letter-spacing:.15em;font-size:.95rem;
+         padding:.4rem 1.3rem;background:var(--blue);color:var(--paper);border:none;cursor:pointer}
+  button:hover{background:var(--blue-deep)}
+  button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  button.playing{background:var(--ink)}
+  .note-now{font-family:var(--mono);font-size:.85rem;color:var(--blue-deep);min-width:4ch}
+
+  /* annotation workbench */
+  .bench{border:1px solid var(--ink);padding:1.2rem;margin-top:3rem}
+  .bench h2{font-family:'IM Fell English',serif;font-weight:400;font-size:1.5rem;margin-bottom:.3rem}
+  .bench p{font-size:.9rem;color:var(--faded);margin-bottom:.8rem}
+  textarea{width:100%;min-height:4.2rem;font:0.85rem/1.5 var(--mono);border:1px solid var(--rule);
+           padding:.6rem;background:var(--paper);resize:vertical}
+  #imgSlot{margin-top:.8rem}
+  #imgSlot img{max-width:100%;border:1px solid var(--rule)}
+  input[type=file]{font-size:.85rem}
+  .err{color:#8a2f1e;font-size:.85rem;font-family:var(--mono);margin-top:.4rem;min-height:1.2em}
+  .fmt{font-size:.8rem;color:var(--faded);margin-top:.6rem}
+  .fmt code{font-family:var(--mono);background:#f2efe7;padding:0 .25em}
+  @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Wood Notes Wild</h1>
+  <div class="sub">Notations of Bird Music · 1892</div>
+  <div class="credit">Simeon Pease Cheney — proof-of-concept player</div>
+</header>
+
+<div class="controls">
+  <div class="ctl">Tempo
+    <input type="range" id="tempo" min="40" max="200" value="96">
+    <output id="tempoOut">96 bpm</output>
+  </div>
+  <div class="ctl">Octave
+    <input type="range" id="octave" min="-2" max="2" value="0" step="1">
+    <output id="octOut">+0</output>
+  </div>
+  <div class="ctl">Timbre
+    <select id="timbre">
+      <option value="whistle">Whistle</option>
+      <option value="pure">Pure tone</option>
+      <option value="reed">Reed</option>
+    </select>
+  </div>
+  <div class="ctl">Slide
+    <select id="slide">
+      <option value="0">Off</option>
+      <option value="1">Bird glide</option>
+    </select>
+  </div>
+</div>
+
+<section class="fig" data-enc="E5:8 C#5:8 | D5:4^ r:8 A4:8 | E5:8 C#5:8">
+  <div class="fig-head"><span class="fig-no">1.</span>
+    <span class="fig-bird">Bluebird</span><span class="fig-latin">Sialia sialis · p. 11</span></div>
+  <div class="staffline"></div>
+  <div class="enc">E5:8 C#5:8 | D5:4^ r:8 A4:8 | E5:8 C#5:8</div>
+  <div class="lyric">Hear me, hear me.</div>
+  <div class="row"><button class="play">Play</button><span class="note-now"></span></div>
+</section>
+
+<section class="fig" data-enc="C#5:8 D5:8 E5:8 C#5:8">
+  <div class="fig-head"><span class="fig-no">3.</span>
+    <span class="fig-bird">Bluebird</span><span class="fig-latin">Sialia sialis · p. 12</span></div>
+  <div class="staffline"></div>
+  <div class="enc">C#5:8 D5:8 E5:8 C#5:8</div>
+  <div class="lyric">Che-way che-chute.</div>
+  <div class="row"><button class="play">Play</button><span class="note-now"></span></div>
+</section>
+
+<div class="bench">
+  <h2>Annotation workbench</h2>
+  <p>Load a cropped figure image, transcribe it in the box, and audition the result.</p>
+  <input type="file" id="imgFile" accept="image/*">
+  <div id="imgSlot"></div>
+  <textarea id="benchEnc" spellcheck="false">A4:8 D5:8 F5:8 D5:8 | A4:4</textarea>
+  <div class="row"><button id="benchPlay">Play</button><span class="note-now" id="benchNow"></span></div>
+  <div class="err" id="benchErr"></div>
+  <div class="fmt">Format: <code>pitch:duration</code> tokens, space-separated. Durations
+    <code>1 2 4 8 16</code> (add <code>.</code> for dotted, <code>3</code> suffix for triplet
+    member, <code>^</code> for fermata ≈1.7×). <code>r:8</code> = rest. Bars <code>|</code> are
+    ignored by the parser — keep them for readability.</div>
+</div>
+
+<script>
+let ctx = null;
+function audio(){ if(!ctx) ctx = new (window.AudioContext||window.webkitAudioContext)(); return ctx; }
+
+const NOTE = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
+function freq(tok, octShift){
+  const m = tok.match(/^([A-Ga-g])([#b]{0,2})(\d)$/);
+  if(!m) return null;
+  let semis = NOTE[m[1].toUpperCase()];
+  for(const a of m[2]) semis += (a === '#' ? 1 : -1);
+  const midi = (parseInt(m[3]) + 1 + octShift) * 12 + semis;
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+function parse(enc){
+  const events = [];
+  for(const raw of enc.trim().split(/\s+/)){
+    if(raw === '|' || raw === '') continue;
+    const parts = raw.split(':');
+    if(parts.length !== 2) throw `bad token "${raw}"`;
+    const [p, dRaw] = parts;
+    let d = dRaw, mult = 1;
+    if(d.endsWith('^')){ mult *= 1.7; d = d.slice(0,-1); }
+    if(d.endsWith('.')){ mult *= 1.5; d = d.slice(0,-1); }
+    let trip = false;
+    if(d.endsWith('3') && d.length > 1){ trip = true; d = d.slice(0,-1); }
+    const base = parseInt(d);
+    if(![1,2,4,8,16,32].includes(base)) throw `bad duration in "${raw}"`;
+    let beats = 4 / base * mult;
+    if(trip) beats *= 2/3;
+    if(p === 'r' || p === 'R'){ events.push({rest:true, beats, label:raw}); }
+    else{
+      if(!/^[A-Ga-g][#b]{0,2}\d$/.test(p)) throw `bad pitch in "${raw}"`;
+      events.push({pitch:p, beats, label:p});
+    }
+  }
+  if(!events.length) throw 'no notes';
+  return events;
+}
+
+let stopFlag = {};
+async function playSeq(enc, btn, nowEl, errEl){
+  if(errEl) errEl.textContent = '';
+  let events;
+  try{ events = parse(enc); }
+  catch(e){ if(errEl) errEl.textContent = String(e); return; }
+
+  // stop others
+  Object.values(stopFlag).forEach(f => f.stop = true);
+  const flag = {stop:false}; stopFlag[Math.random()] = flag;
+
+  const ac = audio();
+  if(ac.state === 'suspended') await ac.resume();
+  const bpm = +document.getElementById('tempo').value;
+  const octShift = +document.getElementById('octave').value;
+  const timbre = document.getElementById('timbre').value;
+  const glide = document.getElementById('slide').value === '1';
+  const spb = 60 / bpm;
+
+  btn.classList.add('playing'); btn.textContent = 'Stop';
+  const cancel = () => { flag.stop = true; };
+  btn.onclick = cancel;
+
+  const master = ac.createGain(); master.gain.value = 0.25; master.connect(ac.destination);
+
+  let t = ac.currentTime + 0.06;
+  let prevFreq = null;
+  for(const ev of events){
+    const dur = ev.beats * spb;
+    if(!ev.rest){
+      const f = freq(ev.pitch, octShift);
+      const o = ac.createOscillator();
+      o.type = timbre === 'reed' ? 'sawtooth' : timbre === 'pure' ? 'sine' : 'triangle';
+      const g = ac.createGain();
+      const filt = ac.createBiquadFilter();
+      filt.type = 'lowpass';
+      filt.frequency.value = timbre === 'whistle' ? f*3 : timbre === 'reed' ? f*4 : 12000;
+      o.connect(filt); filt.connect(g); g.connect(master);
+      if(glide && prevFreq){
+        o.frequency.setValueAtTime(prevFreq, t);
+        o.frequency.exponentialRampToValueAtTime(f, t + Math.min(0.06, dur*0.3));
+      } else o.frequency.setValueAtTime(f, t);
+      // small chirp attack for whistle
+      const a = 0.012, r = Math.min(0.08, dur*0.35);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(1, t + a);
+      g.gain.setValueAtTime(1, t + dur - r);
+      g.gain.linearRampToValueAtTime(0.0001, t + dur);
+      o.start(t); o.stop(t + dur + 0.02);
+      prevFreq = f;
+    }
+    t += dur;
+  }
+  const total = (t - ac.currentTime) * 1000;
+
+  // progress readout
+  const start = performance.now();
+  let idx = 0, acc = 0;
+  const marks = events.map(ev => (acc += ev.beats * spb * 1000, acc));
+  (function tick(){
+    if(flag.stop){ master.disconnect(); finish(); return; }
+    const el = performance.now() - start;
+    while(idx < events.length && el > marks[idx]) idx++;
+    if(nowEl) nowEl.textContent = idx < events.length ? events[idx].label : '';
+    if(el < total) requestAnimationFrame(tick); else finish();
+  })();
+  function finish(){
+    btn.classList.remove('playing'); btn.textContent = 'Play';
+    if(nowEl) nowEl.textContent = '';
+    btn.onclick = origHandlers.get(btn);
+  }
+}
+
+const origHandlers = new Map();
+document.querySelectorAll('.fig').forEach(sec => {
+  const btn = sec.querySelector('.play');
+  const now = sec.querySelector('.note-now');
+  const h = () => playSeq(sec.dataset.enc, btn, now, null);
+  origHandlers.set(btn, h); btn.onclick = h;
+});
+{
+  const btn = document.getElementById('benchPlay');
+  const h = () => playSeq(document.getElementById('benchEnc').value, btn,
+                          document.getElementById('benchNow'),
+                          document.getElementById('benchErr'));
+  origHandlers.set(btn, h); btn.onclick = h;
+}
+
+document.getElementById('tempo').oninput = e =>
+  document.getElementById('tempoOut').textContent = e.target.value + ' bpm';
+document.getElementById('octave').oninput = e =>
+  document.getElementById('octOut').textContent = (e.target.value >= 0 ? '+' : '') + e.target.value;
+
+document.getElementById('imgFile').onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  const img = new Image();
+  img.onload = () => URL.revokeObjectURL(img.src);
+  img.src = URL.createObjectURL(f);
+  const slot = document.getElementById('imgSlot');
+  slot.innerHTML = ''; slot.appendChild(img);
+};
+</script>
+</body>
+</html>
