@@ -165,6 +165,70 @@ Subagents: not allowed (one file, sequential edits).
 
 Gate: `check_solo.py` PASS + smoke test PASS, pasted.
 
+## Decisions (owner, 2026-11-02)
+
+- **Scordatura (Suite 5, BWV 1011): canon is sounding pitch.** Display the
+  notes that sound; no scordatura tuning or written-pitch representation.
+  Audio and score then agree. The current kern files already encode
+  sounding pitch (`*k[b-e-a-]`, `*c:`, no scordatura interpretation). When
+  the missing Suite 5 movements are fetched, reject any source that encodes
+  written scordatura pitch.
+
+## Phase 4 — pinch zoom and live spacing (both corpora)
+
+Goal: zooming and spacing feel immediate in both the chorale game and solo
+listen mode, on phone and desktop.
+
+Today the spacing slider debounces 160 ms and then re-runs Verovio layout,
+so nothing visibly happens while dragging, and long scores lag. Use a
+two-stage pattern for both zoom and spacing:
+
+1. **Live preview while the gesture runs:** a CSS `transform` on the score
+   container only. No Verovio calls during the gesture.
+   - zoom: `scale(z)`, with `transform-origin` at the pinch midpoint (or the
+     cursor, for wheel zoom) so the point under the fingers stays put;
+   - spacing: `scaleX(s)` for the horizontal chorale layout; in solo mode
+     spacing changes system breaks, so preview with `scaleX` and accept
+     that the final render may re-wrap.
+2. **Commit on gesture end:** remove the transform, re-render once with
+   Verovio at the new `scale` (zoom) or spacing values, then restore the
+   scroll position so the same musical point stays under the pinch midpoint.
+
+Inputs:
+- Touch: two-pointer pinch on the score area (Pointer Events). Set
+  `touch-action: pan-x pan-y` on the score container so the browser's page
+  zoom doesn't fight it there; leave page zoom alone elsewhere.
+- Desktop: Ctrl/Cmd + wheel over the score (a trackpad pinch arrives as a
+  wheel event with `ctrlKey`); `preventDefault` only in that case.
+- Clamp zoom to 0.5×–3×. Persist zoom per corpus (`zoom:chorale`,
+  `zoom:solo`) in localStorage, wrapped in try/catch like the existing keys.
+- The spacing slider uses the same preview-then-commit path: preview on
+  `input`, commit on `change` (pointerup/keyup), not on a timer.
+
+Must keep working after any zoom or spacing commit:
+- chorale: answer slots realign (SPEC pitfall 5 invariant: slot x strictly
+  increasing), playhead cursor, drone, grading;
+- solo: highlight, auto-scroll, tap-to-start (note ids are stable across
+  redoLayout in 6.2.x, as P2 verified);
+- a gesture during playback must not stop or desync playback.
+
+Smoke test additions (`tests/smoke_solo.mjs`, or a new
+`tests/smoke_zoom.mjs`), simulating zoom with Ctrl + mouse wheel over the
+score:
+- chorale 1: zoom in, then the slot x positions are strictly increasing and
+  the count is unchanged; zoom persists across reload;
+- `s:bwv1007-1`: zoom in during playback, then within 2 s a note is
+  highlighted and playback is still running;
+- spacing slider: a programmatic `input` event changes the container's
+  transform without calling Verovio; a `change` event commits and removes
+  it;
+- no console errors anywhere.
+Real touch pinch can't be tested headless: note that in STATUS.md for the
+owner to check on a phone.
+
+Gate: `check_solo.py --allow-partial` PASS plus all smoke assertions PASS,
+pasted. Subagents: not allowed (one file).
+
 ## Movement names (movementNo = file order)
 
 | BWV | Movements |

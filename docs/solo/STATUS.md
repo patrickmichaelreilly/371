@@ -1,5 +1,16 @@
 # Solo works — status log
 
+## Review of P2 + P3 — 2026-11-02 (Claude session)
+Verdict: **P2 and P3 accepted.** Gate PASS and smoke 19/19 reproduced
+independently; screenshots checked on desktop and phone width. P2 found and
+fixed the stale `end` field in soloRaf itself. P3's decision to keep the
+service-worker VERSION (so visited chorale bundles aren't wiped) is right.
+Owner decisions recorded in HANDOFF ("Decisions"): scordatura = sounding
+pitch. New work: **Phase 4, pinch zoom and live spacing for both
+corpora.** Owner notes from the review, for later: phone staff size is small
+(pinch zoom addresses it); score headers show kern-derived labels
+("Violoncello", "Prelude").
+
 ## P3 — 2026-11-02
 
 Final summary of the whole solo-works effort:
