@@ -1,5 +1,23 @@
 # Solo works — status log
 
+## Review of P1 redo — 2026-11-02 (Claude session)
+Verdict: **P1 accepted.** The BLOCKED call was correct and well evidenced;
+all five diagnoses were reproduced independently. The gate was wrong, not
+the bundles:
+- its "independent" count used music21, which truncates kern at mid-file
+  spine splits (partita1-8: 24 of 70 bars). The first P1 shipped that
+  truncated movement; this redo is the first correct build of it;
+- its slur check grepped raw text (matched a `!!!SCA:` comment) and looked
+  at page 1 only.
+Fixes (by the reviewer): the gate now counts attacks and slur starts with a
+direct kern tokenizer, compares slurs in the MEI itself, fails on Verovio
+repeat expansion (`rend` ids), and silences Verovio's log. Canon edit:
+`*>norep[A,B]` added to bwv1011-03/04 (see INVENTORY.md, "Canon edits");
+those two bundles were rebuilt with `build_solo.py --id`.
+Gate (`--allow-partial`): PASS, 0 failures, 10 expected coverage warnings.
+Next: P2. Highlight logic need not handle `rend` ids any more; the gate
+forbids them.
+
 ## BLOCKED — 2026-11-02 (P1 redo, revised Phase 1)
 
 BLOCKED: with bundles built exactly per the revised Phase 1 (MEI straight

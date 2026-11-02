@@ -15,7 +15,7 @@ Usage:
 Exit code 0 = PASS. Anything else = FAIL. Paste the full output into
 docs/solo/STATUS.md for the phase you are closing.
 """
-import argparse, gzip, hashlib, json, sys, warnings
+import argparse, gzip, hashlib, json, re, sys, warnings
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
@@ -73,6 +73,25 @@ def check_inventory():
         fail("docs/solo/INVENTORY.md missing")
 
 
+def kern_counts(text):
+    """Attacked notes and slur starts in **kern data records."""
+    notes = slurs = 0
+    for line in text.splitlines():
+        if not line or line[0] in "!*=":
+            continue
+        for field in line.split("\t"):
+            if field == ".":
+                continue
+            for tok in field.split(" "):
+                if "r" in tok or not re.search(r"[a-gA-G]", tok):
+                    continue
+                if "]" in tok or "_" in tok:   # tie continuation, no attack
+                    continue
+                notes += 1
+                slurs += tok.count("(")
+    return notes, slurs
+
+
 def tmap(tk):
     r = tk.renderToTimemap()
     return json.loads(r) if isinstance(r, str) else r
@@ -80,7 +99,7 @@ def tmap(tk):
 
 def check_bundles(allow_partial=False):
     import verovio
-    from music21 import converter, bar
+    verovio.enableLog(False)
     v = verovio.toolkit().getVersion()
     if not v.startswith("6.2"):
         fail(f"pip verovio is {v}; pin verovio==6.2.1 (lockstep with vendor JS 6.2.0)")
@@ -127,21 +146,27 @@ def check_bundles(allow_partial=False):
         pages = tk.getPageCount()
         if pages < 1:
             fail(f"{bid}: verovio rendered 0 pages")
-        svg = tk.renderToSVG(1)
-        ons = sum(len(e["on"]) for e in tmap(tk) if e.get("on"))
-        # 2. nothing lost against an independent parse of the kern source
+        on_ids = [i for e in tmap(tk) for i in e.get("on", [])]
+        rend = sum("rend" in i for i in on_ids)
+        if rend:
+            fail(f"{bid}: Verovio expands repeats ({rend} replayed notes); "
+                 "the kern needs a *>norep[...] expansion label like the others")
+        ons = len(on_ids) - rend
+        # 2. nothing lost against an independent count of the kern source
+        #    (direct tokenizer: music21's Humdrum parser truncates at mid-file
+        #    spine splits, so it cannot be the referee). Ids containing
+        #    "rend" are Verovio's repeat-expansion copies, not new notes.
         src = ROOT / "data/solo/kern" / d.get("sourceFile", "")
         if not src.is_file():
             fail(f"{bid}: sourceFile '{d.get('sourceFile')}' not found under data/solo/kern/")
         else:
-            s = converter.parse(str(src))
-            pitches = sum(len(n.pitches) for n in s.recurse().notes
-                          if not n.duration.isGrace)
-            if not (0.97 * pitches <= ons <= 1.03 * pitches + 5):
-                fail(f"{bid}: timemap note-ons {ons} vs kern pitches {pitches} "
-                     "(more than 3% apart -- notes lost or duplicated)")
-            if "(" in src.read_text() and 'class="slur' not in svg:
-                fail(f"{bid}: source has slurs but page 1 renders none")
+            kn, ks = kern_counts(src.read_text())
+            if abs(ons - kn) > max(3, 0.015 * kn):
+                fail(f"{bid}: timemap note-ons {ons} vs kern note tokens {kn} "
+                     "(more than 1.5% apart -- notes lost or duplicated)")
+            ms = mei.count("<slur ")
+            if ms < 0.95 * ks - 1:
+                fail(f"{bid}: kern has {ks} slur starts, MEI has {ms}")
         # parts must mirror the timemap exactly (single timeline)
         pn_count = sum(len(p.get("notes", [])) for p in d["parts"])
         if pn_count != ons:

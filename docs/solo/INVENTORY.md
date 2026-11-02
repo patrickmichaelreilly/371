@@ -25,6 +25,16 @@ For the two suites the source splits into 7 files (1007, 1010) the galanterie
 pair occupies movements 5–6, matching the files' own `!!!OMD` headers
 (Menuet I/II, Bourrée I/II).
 
+## Canon edits (hand fixes to the kern sources)
+
+Upstream kern is treated as shards; these files are now our canon. Every
+edit is listed here.
+
+| File | Edit | Why | Date |
+|---|---|---|---|
+| `cello/bwv1011-03.krn` | added `*>norep[A,B]` (both spines) after `*>[A,A,B,B]` | the 25 other repeated movements carry it; without it Verovio expands the repeats, so only these two would play them | 2026-11-02 |
+| `cello/bwv1011-04.krn` | same | same | 2026-11-02 |
+
 ## Present files (28)
 
 | Path | BWV | Mov. no | Movement | Bytes | Source URL | Wayback ts |
