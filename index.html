@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#F6F1E4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -41,12 +41,12 @@
   #space{width:70px;accent-color:var(--ink);height:14px}
 
   /* ---- scroll region: staff + slots ---- */
-  #scroller{flex:1 1 auto;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;
+  #scroller{flex:1 1 auto;overflow-x:auto;overflow-y:hidden;touch-action:pan-x pan-y;
             position:relative;background:
             linear-gradient(var(--paper) 0%, var(--paper-deep) 100%)}
   #content{position:relative;height:100%;min-width:100%}
   #staff{padding:8px 24px 0}
-  #staff svg{height:min(46vh,300px);width:auto;display:block}
+  #staff svg{height:calc(min(46vh,300px)*var(--zoom,1));width:auto;display:block}
   #staff svg *{color:var(--ink)}
   #loadmsg{position:absolute;top:40%;left:0;right:0;text-align:center;
            font-family:var(--sans);font-size:12px;color:var(--ink-soft);
@@ -58,7 +58,7 @@
   /* ---- solo (listen-and-read) mode: body.solo ---- */
   body.solo #slots,body.solo #palette,body.solo #progspan,
   body.solo #resetbtn{display:none}
-  body.solo #scroller{overflow:auto;touch-action:auto}
+  body.solo #scroller{overflow:auto;touch-action:pan-x pan-y}
   body.solo #content{height:auto;min-height:100%}
   body.solo #staff{padding:10px 10px 60px}
   body.solo #staff svg{width:100%;height:auto;max-width:1100px;margin:0 auto}
@@ -213,7 +213,16 @@ const vrvReady=new Promise(res=>{
 let TK=null;
 async function toolkit(){
   await vrvReady;
-  if(!TK) TK=new verovio.toolkit();
+  if(!TK){
+    TK=new verovio.toolkit();
+    /* Phase 4 test hook: count real toolkit entries (smoke test asserts
+       the spacing preview makes none). No behaviour change. */
+    for(const m of ['setOptions','loadData','redoLayout','renderToSVG',
+                    'renderToTimemap','getPageCount']){
+      const f=TK[m].bind(TK);
+      TK[m]=(...a)=>{window.__vrv=(window.__vrv||0)+1;return f(...a);};
+    }
+  }
   return TK;
 }
 /* continuous spacing: piecewise-linear through the three verified anchors
@@ -325,6 +334,7 @@ function setup(data){
   stopPlayback(); stopDrone(true);
   DATA=data; sel=-1; attempts={}; results={};
   document.body.classList.remove('solo');
+  loadZoom();                      /* per-corpus zoom (Phase 4) */
   cursor.style.display='none';
   /* pre-parse answers; keyChange = first event of a new key region */
   let prevKey=null;
@@ -436,6 +446,7 @@ function setupSolo(data){
   stopPlayback();stopDrone(true);
   DATA=data;sel=-1;attempts={};results={};
   document.body.classList.add('solo');
+  loadZoom();                      /* per-corpus zoom (Phase 4) */
   cursor.style.display='none';
   slotsEl.innerHTML='';slots=[];chosenIds=[];
   const k=data.key||'';
@@ -455,8 +466,10 @@ function soloOptions(){
   const [lin,nonlin]=spacingFor(+spaceEl.value/100);
   const W=Math.min(Math.max(300,scroller.clientWidth-20),1100);
   const staffPx=Math.min(48,Math.max(21,W/17));
+  /* zoom: smaller pageWidth = fewer units across the same css width =
+     bigger staff on screen (on-screen staff px ≈ staffPx·zoom) */
   return {breaks:'auto',adjustPageHeight:true,adjustPageWidth:false,
-          pageWidth:Math.round(127*W/staffPx),scale:100,
+          pageWidth:Math.max(2000,Math.round(127*W/staffPx/zoom)),scale:100,
           footer:'none',header:'none',
           spacingLinear:lin,spacingNonLinear:nonlin};
 }
@@ -629,20 +642,143 @@ function layout(){
 }
 window.addEventListener('resize',layout);
 
-/* continuous spacing slider: re-layout the SAME loaded score (debounced) */
-let spaceTimer=null;
+/* ================= pinch zoom + live spacing (Phase 4) =================
+   Two-stage: while the gesture runs, a CSS transform on #staff gives an
+   immediate preview — no Verovio calls mid-gesture (window.__vrv counts
+   toolkit entries for the smoke test). On gesture end the transform is
+   removed and Verovio re-renders once (redoLayout — ids stay stable, SPEC
+   pitfall 3 / P2), then the scroll position is restored so the musical
+   point under the pinch midpoint (or wheel cursor) stays put. Zoom
+   persists per corpus in localStorage (try/catch like the other keys). */
+let zoom=1;                       /* committed zoom of the current corpus */
+function zoomKey(){return isSolo()?'zoom:solo':'zoom:chorale';}
+function loadZoom(){
+  try{zoom=Math.min(3,Math.max(.5,parseFloat(localStorage.getItem(zoomKey()))||1));}
+  catch(_){zoom=1;}
+  applyZoomVar();
+}
+function saveZoom(){try{localStorage.setItem(zoomKey(),String(zoom));}catch(_){}}
+function applyZoomVar(){staffEl.style.setProperty('--zoom',String(zoom));}
+
+/* live preview: CSS transform on #staff only. Anchor (sx,sy) is a viewport
+   point that must stay put; zy==1 gives a pure horizontal (spacing) scale.
+   Uses offsetLeft/offsetWidth (layout coords — getBoundingClientRect of a
+   transformed element would feed back its own transform). */
+function previewXform(sx,sy,zx,zy){
+  if(!DATA)return;
+  const cR=content.getBoundingClientRect();
+  const lx=staffEl.offsetLeft,ly=staffEl.offsetTop;
+  const W=staffEl.offsetWidth||1,H=staffEl.offsetHeight||1;
+  const axl=(sx==null?lx+W/2:sx-cR.left)-lx;
+  const ayl=(sy==null?ly+H/2:sy-cR.top)-ly;
+  staffEl.style.transformOrigin='0 0';
+  staffEl.style.transform=
+    `translate(${((1-zx)*axl).toFixed(1)}px,${((1-zy)*ayl).toFixed(1)}px)`+
+    ` scale(${zx},${zy})`;
+}
+function clearPreview(){
+  staffEl.style.transform='';staffEl.style.transformOrigin='';
+}
+
+/* commit after a zoom gesture: re-render once, then put the musical point
+   that sat under (ax,ay) back under it. Chorale: zoom is a CSS height
+   factor (--zoom, the svg keeps its base height rule); solo: pageWidth
+   divides by zoom inside soloOptions(), so the re-render truly re-wraps. */
+async function commitZoom(ax,ay){
+  const svgBefore=staffEl.querySelector('svg');
+  const relX=svgBefore
+    ?(ax-svgBefore.getBoundingClientRect().left)
+     /(svgBefore.getBoundingClientRect().width||1):.5;
+  const keepT=scroller.scrollTop;
+  clearPreview();
+  applyZoomVar();
+  if(isSolo()) await renderSolo(false);
+  else await renderScore(false);
+  const svg=staffEl.querySelector('svg');
+  if(svg&&!isSolo()){
+    const r=svg.getBoundingClientRect();
+    scroller.scrollLeft+=r.left+r.width*relX-ax;
+  }else if(isSolo()){
+    scroller.scrollTop=keepT;
+  }
+}
+
+/* pointer pinch on the score area (two pointers) */
+const activePtrs=new Map();
+let pinch=null;                   /* {d0, z0, ax, ay} */
+scroller.addEventListener('pointerdown',ev=>{
+  activePtrs.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+  if(activePtrs.size===2&&DATA){
+    const pts=[...activePtrs.values()];
+    pinch={d0:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y)||1,
+           z0:zoom,ax:(pts[0].x+pts[1].x)/2,ay:(pts[0].y+pts[1].y)/2};
+  }
+});
+scroller.addEventListener('pointermove',ev=>{
+  if(activePtrs.has(ev.pointerId))
+    activePtrs.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+  if(!pinch||activePtrs.size<2)return;
+  const pts=[...activePtrs.values()];
+  const d=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y)||1;
+  zoom=Math.min(3,Math.max(.5,pinch.z0*d/pinch.d0));
+  pinch.ax=(pts[0].x+pts[1].x)/2;pinch.ay=(pts[0].y+pts[1].y)/2;
+  previewXform(pinch.ax,pinch.ay,zoom,zoom);
+});
+function endPinch(ev){
+  activePtrs.delete(ev.pointerId);
+  if(pinch&&activePtrs.size<2){
+    const p=pinch;pinch=null;
+    if(DATA){saveZoom();commitZoom(p.ax,p.ay);}
+  }
+}
+scroller.addEventListener('pointerup',endPinch);
+scroller.addEventListener('pointercancel',endPinch);
+
+/* desktop zoom: Ctrl/Cmd + wheel (a trackpad pinch arrives the same way);
+   preventDefault ONLY here, so page zoom keeps working elsewhere */
+scroller.addEventListener('wheel',ev=>{
+  if(!DATA||!(ev.ctrlKey||ev.metaKey))return;
+  ev.preventDefault();
+  zoom=Math.min(3,Math.max(.5,zoom*(ev.deltaY<0?1.12:1/1.12)));
+  previewXform(ev.clientX,ev.clientY,zoom,zoom);
+  clearTimeout(commitZoom._t);
+  commitZoom._t=setTimeout(()=>{
+    if(!DATA)return;
+    saveZoom();commitZoom(ev.clientX,ev.clientY);
+  },220);
+},{passive:false});
+
+/* spacing slider: same two-stage path — preview (scaleX, CSS only) on
+   `input`, commit (one Verovio re-render) on `change`, no timers.
+   Solo spacing changes system breaks, so the scaleX preview is
+   approximate there; the commit re-wraps (accepted by HANDOFF P4). */
+let spaceBase=null;               /* slider value at the last commit */
+function spaceProxy(t){const [l,n]=spacingFor(t);return (l+n)/2;}
 spaceEl.addEventListener('input',()=>{
-  clearTimeout(spaceTimer);
-  spaceTimer=setTimeout(()=>{
-    if(!DATA) return;
-    localStorage.setItem('space',spaceEl.value);
-    if(isSolo()){renderSolo(false);return;}
-    renderScore(false).then(()=>{
-      if(sel>=0)slots[sel].scrollIntoView({inline:'center',block:'nearest'});
-    });
-  },160);
+  if(!DATA)return;
+  const t=+spaceEl.value/100;
+  const base=spaceProxy(spaceBase==null?t:spaceBase)||1;
+  const s=Math.max(.2,Math.min(3,spaceProxy(t)/base));
+  previewXform(null,null,s,1);
+});
+spaceEl.addEventListener('change',async()=>{
+  if(!DATA)return;
+  clearPreview();
+  spaceBase=+spaceEl.value/100;
+  try{localStorage.setItem('space',spaceEl.value);}catch(_){}
+  const keepT=scroller.scrollTop,frac=(scroller.scrollLeft/
+    Math.max(1,scroller.scrollWidth-scroller.clientWidth));
+  if(isSolo()) await renderSolo(false);
+  else await renderScore(false);
+  if(isSolo()){scroller.scrollTop=keepT;}
+  else if(sel>=0)slots[sel].scrollIntoView({inline:'center',block:'nearest'});
+  else{
+    const sw=scroller.scrollWidth-scroller.clientWidth;
+    scroller.scrollLeft=frac*Math.max(0,sw);
+  }
 });
 spaceEl.value=localStorage.getItem('space')||'50';
+spaceBase=+spaceEl.value/100;
 
 function firstUnanswered(){
   if(!DATA) return -1;
