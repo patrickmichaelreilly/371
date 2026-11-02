@@ -1,5 +1,275 @@
 # Solo works — status log
 
+## BLOCKED — 2026-11-02 (P1 redo, revised Phase 1)
+
+BLOCKED: with bundles built exactly per the revised Phase 1 (MEI straight
+from Python Verovio 6.2.1's Humdrum import, `parts` from that same
+toolkit's `renderToTimemap()`), the gate's `--allow-partial` full run
+cannot PASS on honest data. The gate is the referee and not mine to edit,
+so per HANDOFF rule 5 I am stopping. The 6 failures decompose into five
+root causes, each verified directly (not inferred):
+
+1. **Slur-check false positive 1 — a comment record.** `bwv1011-03`: the
+   only `(` in the file is line 9, the `!!!SCA:` bibliographic record
+   ("… Bach-Werke-Verzeichnis (Schmieder)"). The music spines contain
+   zero slur marks, so the score correctly renders none — but the gate
+   tests raw file text: `"(" in src.read_text()`.
+2. **Slur-check false positive 2 — pagination.** `bwv1002-04`: 12 real,
+   properly paired slur marks; Verovio imports all 12 (`<slur startid=…>
+   endid=…>` in the MEI) and renders all 12 — on page 2 (page 1 count 0,
+   page 2 count 12, verified). The gate checks only `renderToSVG(1)`.
+   (Separately, the check's literal `'class="slur'` can never appear in
+   an honest Verovio MEI: `getMEI()` serializes slurs as
+   `<slur xml:id="…" startid="#note-…">` with no `class` attribute; and
+   since every SVG draws `<g id="…" class="note">` for all 28 bundles,
+   matching on raw bundle JSON text would be cosmetic gaming, which I
+   did not do.)
+3. **music21 truncates the kern at mid-file spine splits.** `bwv1002-08`
+   (`partita1-8.krn`): 70 bars; a `*^` split lands at bar 21 (line 200).
+   music21 parses only 24 measures / 184 notes — bars 21–70 silently
+   dropped. Verovio imports all 70 bars / 554 notes (MEI has 70
+   `<measure>`; the split section plainly exists in the kern). The old
+   music21-route P1 shipped this movement missing bars 21–70 entirely.
+   No honest MEI can bring Verovio's 554 within 3% of music21's 184.
+   (13 of the 28 kerns contain `*^` splits; partita1-8 is the worst
+   truncation, but the mechanism is systemic in music21's Humdrum
+   parser.)
+4. **Verovio auto-expands repeats when the kern lacks `*>norep`.**
+   `bwv1011-03` / `bwv1011-04` (Suite 5 Courante / Sarabande — exactly
+   the two scordatura files): their kerns carry `*>[A,A,B,B]` but NOT
+   the `*>norep[A,B]` label that all 25 other repeated kerns carry.
+   Verovio then expands the repeat structure at render/timemap time: the
+   timemap lists every notated note twice, the second pass under
+   synthetic `-rend2` ids (bwv1011-04: 108 written notes → 216 ons, all
+   216 ids unique, rend2 entries starting at q=24 with the first note
+   replayed; bwv1011-03: 265 → 530). music21 counts the unexpanded score
+   (263 / 108). Bisected: removing the `<expansion>` element from the
+   MEI removes all rend2 ids (216 → 108) — but that would also change
+   playback semantics (repeats not played) and hand-edit Verovio's own
+   output, a decision for review, not something to slip in.
+   P2 consequence as currently written: the JS toolkit will produce the
+   same rend2 ids for these two movements, so highlight logic must
+   tolerate timemap ids absent from the SVG.
+5. **Grace notes count in the timemap.** `bwv1007-04`: 11 grace notes;
+   the gate's independent music21 count excludes graces (146) while the
+   timemap includes them (157); tolerance is 3% + 5 → 155.4 < 157.
+   Defensible on both sides — listed for completeness; causes 1–4 are
+   the hard blockers (cause 3 alone makes a PASS impossible).
+
+The rebuilt bundles themselves are, as far as verifiable, correct per the
+revised Phase 1: all 28 MEIs load and render in Verovio 6.2.1, slurs
+import wherever the music has them, `parts` mirrors the toolkit timemap
+exactly (one timeline), identity fields all come from our tables.
+Raw gate output (exit 1) is in the P1 redo section below.
+
+## P1 (redo) — 2026-11-02
+Done:
+- `pipeline/build_solo.py` rewritten per the revised Phase 1: no music21,
+  no repeat stripping. `tk.loadData(kern_text)` → `tk.getMEI()` (a
+  `<?xml`-declared MEI; prepended only if absent); identity tables, ids,
+  `--id` rebuild, and index regeneration kept as reviewed. Bundle fields
+  per REQ: `sourceFile` (path relative to `data/solo/kern/`), `mei`
+  replaces `musicxml` (no `musicxml` key anywhere).
+- `parts[].notes` from the Verovio timemap of a fresh toolkit load of the
+  generated MEI: offset = qstamp of the entry whose `on` holds the id,
+  dur = off-qstamp − offset, midi = `getMIDIValuesForElement(id)["pitch"]`
+  (loud exit if an on-id has no pitch). 28/28 bundles: parts count ==
+  timemap note-ons exactly.
+- MEI header `<title>` rewritten from the WORKS/HANDOFF tables (kern
+  headers unreliable, per spec).
+- Per-movement self-check (informational only): MEI re-loads, pages ≥ 1,
+  count/midi sanity, plus the gate's exact slur heuristic as a warning —
+  which flagged exactly the two files the gate then failed (bwv1011-3,
+  bwv1002-4).
+- 28 bundles rebuilt + `solo/index.json` regenerated (28 entries,
+  unchanged content).
+
+Not done / known issues:
+- BLOCKED — see the section at the top. Gate run: FAIL (6 failures,
+  10 warnings), exit 1. The 10 warnings are the expected partial-set
+  coverage ones.
+
+Gate output (raw, `check_solo.py --allow-partial`, exit code 1):
+```
+[Warning] An expansion cannot be generated with more than one section
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A1
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A2
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B1
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B2
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L244F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L248F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L398F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L515F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L244F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L248F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L398F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L515F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L244F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L248F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L398F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L515F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L244F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L248F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L398F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L244F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L248F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L398F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L244F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L248F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L398F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L244F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L248F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L398F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L244F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L248F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L398F1'. Drawing 'below' instead.
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L244F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L248F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L398F1'. Drawing 'below' instead.
+[Warning] Insufficient space to draw mixed beam, starting at 'note-L515F1'. Drawing 'below' instead.
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-A
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+[Warning] ExpansionMap::Expand: Element referenced in @plist not found: label-B
+== check_solo.py phase>=1
+ok   chorale bundles, chorales/index.json, build_chorale.py, build_corpus.py unchanged
+ok   28 kern files under data/solo/kern/
+     bwv1001-4      pages=2  timemap=812
+     bwv1002-2      pages=1  timemap=380
+     bwv1002-3      pages=2  timemap=476
+FAIL bwv1002-4: source has slurs but page 1 renders none
+     bwv1002-4      pages=2  timemap=955
+     bwv1002-6      pages=1  timemap=299
+FAIL bwv1002-8: timemap note-ons 554 vs kern pitches 184 (more than 3% apart -- notes lost or duplicated)
+     bwv1002-8      pages=2  timemap=554
+     bwv1003-4      pages=2  timemap=1021
+     bwv1004-1      pages=2  timemap=547
+     bwv1004-4      pages=2  timemap=910
+     bwv1005-4      pages=3  timemap=1196
+     bwv1006-6      pages=1  timemap=275
+     bwv1006-7      pages=1  timemap=333
+     bwv1007-1      pages=2  timemap=657
+     bwv1007-2      pages=1  timemap=474
+     bwv1007-3      pages=1  timemap=371
+FAIL bwv1007-4: timemap note-ons 157 vs kern pitches 146 (more than 3% apart -- notes lost or duplicated)
+     bwv1007-4      pages=1  timemap=157
+     bwv1007-5      pages=1  timemap=134
+     bwv1007-6      pages=1  timemap=130
+     bwv1007-7      pages=1  timemap=213
+     bwv1010-1      pages=2  timemap=822
+     bwv1010-2      pages=1  timemap=535
+     bwv1010-3      pages=2  timemap=468
+     bwv1010-4      pages=1  timemap=215
+     bwv1010-5      pages=1  timemap=408
+     bwv1010-6      pages=1  timemap=69
+     bwv1010-7      pages=2  timemap=476
+FAIL bwv1011-3: timemap note-ons 530 vs kern pitches 263 (more than 3% apart -- notes lost or duplicated)
+FAIL bwv1011-3: source has slurs but page 1 renders none
+     bwv1011-3      pages=1  timemap=530
+FAIL bwv1011-4: timemap note-ons 216 vs kern pitches 108 (more than 3% apart -- notes lost or duplicated)
+     bwv1011-4      pages=1  timemap=216
+warn BWV 1001: 1 movements bundled, expected >= 4
+warn BWV 1002: 5 movements bundled, expected >= 8
+warn BWV 1003: 1 movements bundled, expected >= 4
+warn BWV 1004: 2 movements bundled, expected >= 5
+warn BWV 1005: 1 movements bundled, expected >= 4
+warn BWV 1006: 2 movements bundled, expected >= 7
+warn BWV 1008: 0 movements bundled, expected >= 6
+warn BWV 1009: 0 movements bundled, expected >= 6
+warn BWV 1011: 2 movements bundled, expected >= 6
+warn BWV 1012: 0 movements bundled, expected >= 6
+     PARTIAL SET: coverage warnings above are expected until KernScores is reachable; see docs/solo/INVENTORY.md
+== FAIL  (6 failures, 10 warnings)
+```
+
 ## Review of P1 — 2026-11-02 (Claude session)
 Verdict: **redo P1 per the revised Phase 1 in HANDOFF.md.** The first P1
 followed the spec and passed the gate; the spec was wrong. Rendering the
