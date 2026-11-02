@@ -443,19 +443,20 @@ function setupSolo(data){
     k?k.replace('-','♭')+(k[0]===k[0].toLowerCase()?' minor':' major'):'–';
   document.getElementById('mprog').textContent='–';
   resetState();
+  content.style.width='';          /* drop the chorale layout's inline width */
   staffEl.innerHTML='';scroller.scrollTop=0;
   msg('Press play, or tap a note to start from there.');
   renderSolo(true);
 }
 
-/* page layout: staff px on screen ≈ 1.44·W·scale/pageWidth in Verovio's
-   viewBox units (measured, 6.2.x) — pick pageWidth for a readable staff */
+/* page layout: staff px on screen ≈ 1.27·W·scale/pageWidth (measured in
+   Verovio 6.2.x at scale 100) — pick pageWidth for a readable staff */
 function soloOptions(){
   const [lin,nonlin]=spacingFor(+spaceEl.value/100);
   const W=Math.min(Math.max(300,scroller.clientWidth-20),1100);
   const staffPx=Math.min(48,Math.max(21,W/17));
   return {breaks:'auto',adjustPageHeight:true,adjustPageWidth:false,
-          pageWidth:Math.round(144*W/staffPx),scale:100,
+          pageWidth:Math.round(127*W/staffPx),scale:100,
           footer:'none',header:'none',
           spacingLinear:lin,spacingNonLinear:nonlin};
 }
@@ -503,7 +504,7 @@ function buildSoloPlayback(tk){
   soloNotes.sort((a,b)=>a.start-b.start||a.end-b.end);
   ALL_NOTES=[];
   PLAY_NOTES=soloNotes.filter(n=>n.midi>0&&n.end>n.start)
-    .map(n=>({id:n.id,midi:n.midi,offset:n.start,dur:n.end-n.start}));
+    .map(n=>({id:n.id,midi:n.midi,offset:n.start,dur:n.end-n.start,end:n.end}));
   PERF_SEGS=[{o0:0,o1:Infinity,p0:0,p1:Infinity}];   /* no fermata map */
   PIECE_END=PLAY_NOTES.reduce((m,n)=>Math.max(m,n.offset+n.dur),0);
   clearSoloHL();

@@ -1,5 +1,131 @@
 # Solo works — status log
 
+## P2 — 2026-11-02
+Done:
+- `index.html` picker: after `chorales/index.json`, also loads
+  `solo/index.json` and appends two `<optgroup>`s — "Violin — Sonatas &
+  Partitas" (12 options) and "Cello Suites" (16); values `s:<id>`, text
+  `BWV 1002 · Allemanda` format. Chorale options unchanged (355 direct
+  options, same restore path).
+- Loading `s:<id>` fetches `solo/<id>.json.gz` through the existing
+  decompression helper (now path-parametrised; chorale call site passes
+  the same URL as before). Last selection persisted in `lastsel` on every
+  load (chorales also keep writing `riem` exactly as before) and restored
+  on startup — verified across reload in Chromium.
+- `kind==="solo"` (`body.solo` CSS): answer slots, palette, progress and
+  reset hidden; Key shown from the bundle's WORKS-table key (case decides
+  major/minor, e.g. "E♭ major"); `DATA.mei` rendered with the existing
+  toolkit using page layout — `breaks:'auto'`, systems wrap at pageWidth,
+  pages stacked, vertical scroll. Staff size adapts to container width
+  (pageWidth = 127·W/staffPx; constant measured in Verovio 6.2.x).
+- Playback uses **only the Verovio timemap** (`tk.renderToTimemap()`,
+  an array in the JS toolkit): start = the entry qstamp whose `on` holds
+  the id, end = the qstamp where it appears in `off`, pitch =
+  `tk.getMIDIValuesForElement(id).pitch`. parts[].notes offsets are not
+  used for timing. No fermata dilation (identity perf map). The existing
+  25 ms lookahead scheduler, voice, tempo slider, play/stop are reused.
+  Gotcha found and handled: `getMIDIValuesForElement` returns `{}` until
+  `renderToTimemap()` has run (verified in 6.2.1) — the build order in
+  `buildSoloPlayback()` respects that; comment in code.
+- Highlight: `g.playing` class while a note sounds (colour --red, verified
+  rgb(169,50,38) on the notehead/stem in a zoomed screenshot); auto-scroll
+  keeps the sounding system in view (deadband, no per-frame jitter);
+  tapping a notehead starts playback from that note (drag-scroll guarded
+  by a 10 px travel check).
+- Spacing slider works in solo too (redoLayout; note ids verified stable
+  across redoLayout in 6.2.1, so highlight/playback data stays valid).
+- `tests/smoke_solo.mjs` (Playwright headless Chromium + `python3 -m
+  http.server`): all assertions PASS, exit 0 — raw output below.
+- Beyond the mandated assertions: all 28 movements loaded in headless
+  Chromium — every one renders an SVG with zero console errors; playback
+  highlight probed on 6 (incl. bwv1007-4 with its grace notes and the
+  bwv1011-3/4 scordatura pair — bwv1011-3 shows 265 notes, i.e. repeats
+  NOT expanded, matching the P1 canon edit); chorale playback cursor and
+  spacing slider regression-checked; screenshots inspected (wrapped
+  systems with measure numbers, no horizontal scroll).
+
+Not done / known issues:
+- PARTIAL SET as in P0/P1 (KernScores still unreachable): gate run with
+  `--allow-partial`; the 10 coverage warnings are the expected ones.
+- Test tooling lives outside the repo (node tarball in ~/nodedist,
+  playwright module in ~/pw-smoke; no package.json added here) —
+  `tests/smoke_solo.mjs` header documents the exact commands.
+- If `solo/index.json` is unavailable the picker silently falls back to
+  chorale-only (console.warn, no user-facing error).
+
+Gate output (raw, `check_solo.py --allow-partial`, exit code 0):
+```
+== check_solo.py phase>=1
+ok   chorale bundles, chorales/index.json, build_chorale.py, build_corpus.py unchanged
+ok   28 kern files under data/solo/kern/
+     bwv1001-4      pages=2  timemap=812
+     bwv1002-2      pages=1  timemap=380
+     bwv1002-3      pages=2  timemap=476
+     bwv1002-4      pages=2  timemap=955
+     bwv1002-6      pages=1  timemap=299
+     bwv1002-8      pages=2  timemap=554
+     bwv1003-4      pages=2  timemap=1021
+     bwv1004-1      pages=2  timemap=547
+     bwv1004-4      pages=2  timemap=910
+     bwv1005-4      pages=3  timemap=1196
+     bwv1006-6      pages=1  timemap=275
+     bwv1006-7      pages=1  timemap=333
+     bwv1007-1      pages=2  timemap=657
+     bwv1007-2      pages=1  timemap=474
+     bwv1007-3      pages=1  timemap=371
+     bwv1007-4      pages=1  timemap=157
+     bwv1007-5      pages=1  timemap=134
+     bwv1007-6      pages=1  timemap=130
+     bwv1007-7      pages=1  timemap=213
+     bwv1010-1      pages=2  timemap=822
+     bwv1010-2      pages=1  timemap=535
+     bwv1010-3      pages=2  timemap=468
+     bwv1010-4      pages=1  timemap=215
+     bwv1010-5      pages=1  timemap=408
+     bwv1010-6      pages=1  timemap=69
+     bwv1010-7      pages=2  timemap=476
+     bwv1011-3      pages=1  timemap=265
+     bwv1011-4      pages=1  timemap=108
+warn BWV 1001: 1 movements bundled, expected >= 4
+warn BWV 1002: 5 movements bundled, expected >= 8
+warn BWV 1003: 1 movements bundled, expected >= 4
+warn BWV 1004: 2 movements bundled, expected >= 5
+warn BWV 1005: 1 movements bundled, expected >= 4
+warn BWV 1006: 2 movements bundled, expected >= 7
+warn BWV 1008: 0 movements bundled, expected >= 6
+warn BWV 1009: 0 movements bundled, expected >= 6
+warn BWV 1011: 2 movements bundled, expected >= 6
+warn BWV 1012: 0 movements bundled, expected >= 6
+     PARTIAL SET: coverage warnings above are expected until KernScores is reachable; see docs/solo/INVENTORY.md
+ok   28 solo bundles valid
+== PASS  (0 failures, 10 warnings)
+```
+
+Smoke test output (raw, `node tests/smoke_solo.mjs`, exit code 0):
+```
+PASS chorale 1 loads with answer slots
+PASS chorale 1 selected by default
+PASS chorale 1: palette visible
+PASS chorale 1: no console errors
+PASS s:bwv1002-2: SVG rendered with notes (380 note groups)
+PASS s:bwv1002-2: slots and palette hidden
+PASS s:bwv1002-2: no console errors
+PASS s:bwv1002-2: >=1 note highlighted after 2 s of playback
+PASS s:bwv1004-4: SVG rendered with notes (910 note groups)
+PASS s:bwv1004-4: slots and palette hidden
+PASS s:bwv1004-4: no console errors
+PASS s:bwv1004-4: >=1 note highlighted after 2 s of playback
+PASS s:bwv1007-1: SVG rendered with notes (657 note groups)
+PASS s:bwv1007-1: slots and palette hidden
+PASS s:bwv1007-1: no console errors
+PASS s:bwv1007-1: >=1 note highlighted after 2 s of playback
+PASS back to chorale 1: slots visible and populated
+PASS back to chorale 1: palette visible
+PASS back to chorale 1: no console errors
+```
+
+Waiting for review.
+
 ## Review of P1 redo — 2026-11-02 (Claude session)
 Verdict: **P1 accepted.** The BLOCKED call was correct and well evidenced;
 all five diagnoses were reproduced independently. The gate was wrong, not
