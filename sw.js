@@ -1,9 +1,10 @@
 /* Offline-first service worker (Milestone 4).
-   - App shell (index.html, verovio, manifest, icons, chorale list) is
-     precached on install and served network-first with cache fallback so
-     updates land when online but everything works offline.
-   - Chorale bundles (chorales/NNN.json.gz) are immutable-ish and large:
-     cache-first, populated as the player visits chorales. */
+   - App shell (index.html, verovio, manifest, icons, chorale + solo picker
+     lists) is precached on install and served network-first with cache
+     fallback so updates land when online but everything works offline.
+   - Movement bundles (chorales/NNN.json.gz, solo/<id>.json.gz) are
+     immutable-ish and large: cache-first, populated as the player visits
+     them. */
 const VERSION = 'v1';
 const SHELL_CACHE = `shell-${VERSION}`;
 const DATA_CACHE = `data-${VERSION}`;
@@ -13,6 +14,7 @@ const SHELL = [
   'vendor/verovio-toolkit-wasm.js',
   'manifest.webmanifest',
   'chorales/index.json',
+  'solo/index.json',
   'icon-192.png',
   'icon-512.png',
 ];
@@ -37,7 +39,7 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
 
   if (url.pathname.endsWith('.json.gz')) {
-    /* chorale bundles: cache-first */
+    /* chorale + solo movement bundles: cache-first */
     e.respondWith(
       caches.open(DATA_CACHE).then(async c => {
         const hit = await c.match(e.request);

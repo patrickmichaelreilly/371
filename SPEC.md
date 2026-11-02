@@ -100,6 +100,44 @@ monetizing. Clone sparsely (see script docstring); the full repo is large.
    (document-level capture pointerdown); never move context resume back
    into a timer.
 
+10. **Expansion labels and `expandRepeats()` are two different repeat
+   mechanisms — do not confuse them.** The chorale pipeline's hazard is
+   music21's `expandRepeats()` (pitfall 1: never call it; strip
+   `bar.Repeat` instead). The solo pipeline never touches music21, but
+   Verovio's own ExpansionMap auto-expands repeats when a kern declares
+   `*>[A,A,B,B]` without a `*>norep[A,B]` fallback label: every notated
+   note is replayed a second time under synthetic `-rend2` ids in the
+   timemap and SVG (measured: bwv1011-04, 108 written notes → 216
+   note-ons). `check_solo.py` fails any bundle whose timemap contains
+   `rend` ids; the fix is a `*>norep[A,B]` canon edit to the kern (done
+   for the bwv1011-03/04 scordatura pair, see docs/solo/INVENTORY.md).
+   Verovio's `ExpansionMap::Expand: Element referenced in @plist not
+   found: label-X` and "expansion cannot be generated" warnings are
+   harmless — ignore them (HANDOFF says so explicitly).
+
+11. **Verovio qstamps are not music21 offsets.** They drift by up to a
+   bar wherever there is a pickup or partial measure (measured:
+   partita1-2 ends at qstamp 99.25 vs music21 95.25). Never mix the two
+   timelines: chorale playback timing comes from `parts[].notes`
+   (music21 offsets of the same stripped score the SVGs come from);
+   solo playback timing comes ONLY from `tk.renderToTimemap()` — start =
+   the entry qstamp whose `on` holds the id, end = the qstamp where it
+   appears in `off`. That is also why the solo build derives
+   `parts[].notes` from that same toolkit timemap (one timeline; the
+   gate asserts parts == timemap exactly). Related order-dependency
+   (found in P2, Verovio 6.2.x): `getMIDIValuesForElement(id)` returns
+   `{}` until `renderToTimemap()` has run — call the timemap first.
+
+12. **Humdrum kern `!!!` header metadata is unreliable for identity.**
+   Work titles, keys and movement names are inconsistent across the
+   KernScores solo set, and a `!!!SCA:` bibliographic record even
+   contains a stray `(` ("Bach-Werke-Verzeichnis (Schmieder)") that
+   trips naive text greps for slur marks. All identity — work, key,
+   movement names/numbers (movementNo = file order) — comes from the
+   build script's own tables (the WORKS table in check_solo.py, the
+   HANDOFF movement table), and the MEI `<title>` is rewritten from
+   them; never parse kern headers for identity.
+
 ## Milestone 1 — full corpus build
 
 Loop `build_chorale.py` over 1..371 and emit a verification report (per
@@ -186,6 +224,23 @@ Milestones 1-3 are built; see git history for details.
   after reveal; browse mode keeps free navigation. PWA: manifest +
   offline-first service worker (shell precached network-first; bundles
   cache-first as visited).
+- **Solo library (2026-11-02; spec in docs/solo/HANDOFF.md)**: a
+  listen-and-read library of the violin Sonatas & Partitas and cello
+  Suites — engraved score, playback with a moving highlight, no analysis
+  game (`events` is always `[]`; the analysis UI is hidden). Partial set:
+  28 of ~75 movements, KernScores was unreachable at build time
+  (docs/solo/INVENTORY.md). `pipeline/build_solo.py` builds
+  `solo/<id>.json.gz` with MEI straight from the pinned Python Verovio's
+  Humdrum import — music21 is NOT used for solo (its kern→MusicXML route
+  drops slurs and truncates at mid-file spine splits); `parts[].notes`
+  are derived from the same toolkit's timemap so score and playback share
+  one timeline (pitfalls 10–12). The app gains a listen mode: `s:<id>`
+  picker entries render the MEI with page layout, play from
+  `tk.renderToTimemap()` only, highlight sounding notes, tap-to-start.
+  Gated by `pipeline/check_solo.py` (independent kern tokenizer, MEI slur
+  check, repeat-expansion ban); chorale behaviour is pinned byte-identical
+  by docs/solo/chorales.sha256. Offline: `solo/index.json` precached,
+  `solo/*.json.gz` cache-first in sw.js.
 
 ## Manifest
 

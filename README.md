@@ -8,6 +8,16 @@ time; the puzzle is Roman-numeral functional analysis entered below the staff.
 
 Read `SPEC.md` first — it is the canonical spec and pitfall ledger.
 
+There is also a **listen-and-read library** of Bach's solo works — the
+violin Sonatas & Partitas (BWV 1001–1006) and the cello Suites
+(BWV 1007–1012) — in the same app: pick a movement from the "Violin —
+Sonatas & Partitas" or "Cello Suites" group in the picker to see the
+engraved score and play it back with a moving highlight (no analysis
+game). It is currently a partial set, 28 of ~75 movements, because
+KernScores was unreachable at build time; the missing movements and the
+rebuild procedure are in `docs/solo/INVENTORY.md`. Bundles are built by
+`pipeline/build_solo.py` and gated by `pipeline/check_solo.py`.
+
 ## Building
 
 ```sh
@@ -37,4 +47,7 @@ python3 -m http.server 8000   # then open http://localhost:8000/
 ## Attribution
 
 Analyses from [When in Rome](https://github.com/MarkGotham/When-in-Rome)
-(Gotham et al.), CC BY-SA 4.0. Scores from the music21 corpus.
+(Gotham et al.), CC BY-SA 4.0. Chorale scores from the music21 corpus.
+Solo works (violin Sonatas & Partitas, cello Suites): scores from
+[KernScores](https://kern.humdrum.org) (Craig Sapp / CCARH), Humdrum
+`**kern` format.
