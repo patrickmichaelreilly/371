@@ -71,6 +71,18 @@ Subagents: allowed. At most 2 at once (one local GPU): one fetches violin,
 one fetches cello. Each returns its file list; you write INVENTORY.md and
 commit.
 
+## Partial source set (added after P0 attempt 1)
+
+KernScores returned 503 site-wide during P0, and every mirror found holds
+the same 28-file subset. Decision: proceed with the files we have. Run the
+gate as `check_solo.py --allow-partial` in P1–P3; missing movements are
+then warnings, and every other check still fails hard. When KernScores is
+reachable again, re-run P0's fetch for the missing files, rebuild with
+build_solo.py, and run the gate WITHOUT --allow-partial.
+
+Never use files headed `Extracted Monophonic Melody` (e.g. the MCCC set in
+lexngu/cmme-jupyter): their chords and double stops are stripped.
+
 ## Phase 1 — bundles
 
 Write `pipeline/build_solo.py` producing `solo/<id>.json.gz` and
@@ -129,7 +141,7 @@ behaviour.
 6. Smoke test `tests/smoke_solo.mjs` (Playwright, `npx playwright`), serving
    the repo with `python3 -m http.server`. Must print PASS/FAIL per assertion:
    - chorale 1 loads, shows its answer slots, no console errors;
-   - `s:bwv1002-1`, `s:bwv1004-5` (Ciaccona), `s:bwv1007-1` each load with
+   - `s:bwv1002-2` (Double), `s:bwv1004-4` (Giga), `s:bwv1007-1` each load with
      an SVG, no console errors, and after 2 s of playback at least one note
      is highlighted;
    - switching back to chorale 1 restores slots and palette.
