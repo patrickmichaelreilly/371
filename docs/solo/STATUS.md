@@ -1,5 +1,13 @@
 # Solo works — status log
 
+## Review of P1 — 2026-11-02 (Claude session)
+Verdict: **redo P1 per the revised Phase 1 in HANDOFF.md.** The first P1
+followed the spec and passed the gate; the spec was wrong. Rendering the
+bundles showed music21's kern→MusicXML conversion drops all slurs and turns
+spine splits into stray beams. Gate and HANDOFF are updated: bundles ship
+MEI from Python Verovio's Humdrum import. The current solo/*.json.gz will
+FAIL the updated gate until rebuilt.
+
 ## P1 — 2026-11-02
 Done:
 - `pipeline/build_solo.py`: parses each kern (music21), replaces every

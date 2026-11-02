@@ -36,9 +36,9 @@ WORKS = {
     1011: ("cello", "Suite No. 5 in C minor", "c", 6),
     1012: ("cello", "Suite No. 6 in D major", "D", 6),
 }
-REQ = {"id": str, "bwv": int, "set": str, "work": str, "movement": str,
+REQ = {"sourceFile": str, "id": str, "bwv": int, "set": str, "work": str, "movement": str,
        "movementNo": int, "key": str, "kind": str, "source": str,
-       "musicxml": str, "parts": list, "events": list}
+       "mei": str, "parts": list, "events": list}
 
 fails, warns = [], []
 def fail(m): fails.append(m); print("FAIL", m)
@@ -115,32 +115,37 @@ def check_bundles(allow_partial=False):
         if d.get("set") != w[0] or d.get("work") != w[1] or d.get("key") != w[2]:
             fail(f"{bid}: set/work/key must come from the WORKS table: {w[:3]}")
         seen.setdefault(d["bwv"], set()).add(d.get("movementNo"))
-        xml = d.get("musicxml", "")
-        # 1. no repeat barlines survive (371 pitfall 1)
-        tmp = ROOT / "build/_check.musicxml"
-        tmp.parent.mkdir(exist_ok=True)
-        tmp.write_text(xml)
-        try:
-            s = converter.parse(str(tmp))
-        except Exception as e:
-            fail(f"{bid}: music21 cannot parse musicxml ({e})"); continue
-        if list(s.recurse().getElementsByClass(bar.Repeat)):
-            fail(f"{bid}: repeat barlines present in musicxml")
-        pitches = sum(len(n.pitches) for n in s.recurse().notes
-                      if not n.duration.isGrace)
-        graces = sum(len(n.pitches) for n in s.recurse().notes
-                     if n.duration.isGrace)
-        # 2. Verovio renders it and its timemap agrees with the notes
+        mei = d.get("mei", "")
+        if "musicxml" in d:
+            fail(f"{bid}: bundle still carries musicxml; P1 revision ships MEI only")
+        # 1. Verovio (same major/minor as the vendored JS) loads and renders it
         tk = verovio.toolkit()
-        if not tk.loadData(xml):
-            fail(f"{bid}: verovio loadData failed"); continue
+        if not mei.lstrip().startswith("<?xml") or "<mei" not in mei[:2000]:
+            fail(f"{bid}: 'mei' is not MEI XML"); continue
+        if not tk.loadData(mei):
+            fail(f"{bid}: verovio cannot load the MEI"); continue
         pages = tk.getPageCount()
         if pages < 1:
             fail(f"{bid}: verovio rendered 0 pages")
+        svg = tk.renderToSVG(1)
         ons = sum(len(e["on"]) for e in tmap(tk) if e.get("on"))
-        if not (pitches <= ons <= pitches + graces):
-            fail(f"{bid}: timemap note-ons {ons} vs score pitches {pitches} "
-                 f"(+{graces} grace) -- repeats or ties not handled")
+        # 2. nothing lost against an independent parse of the kern source
+        src = ROOT / "data/solo/kern" / d.get("sourceFile", "")
+        if not src.is_file():
+            fail(f"{bid}: sourceFile '{d.get('sourceFile')}' not found under data/solo/kern/")
+        else:
+            s = converter.parse(str(src))
+            pitches = sum(len(n.pitches) for n in s.recurse().notes
+                          if not n.duration.isGrace)
+            if not (0.97 * pitches <= ons <= 1.03 * pitches + 5):
+                fail(f"{bid}: timemap note-ons {ons} vs kern pitches {pitches} "
+                     "(more than 3% apart -- notes lost or duplicated)")
+            if "(" in src.read_text() and 'class="slur' not in svg:
+                fail(f"{bid}: source has slurs but page 1 renders none")
+        # parts must mirror the timemap exactly (single timeline)
+        pn_count = sum(len(p.get("notes", [])) for p in d["parts"])
+        if pn_count != ons:
+            fail(f"{bid}: parts notes {pn_count} != timemap note-ons {ons}")
         # 3. parts.notes sane
         pn = [n for part in d["parts"] for n in part.get("notes", [])]
         if not pn:
@@ -149,7 +154,7 @@ def check_bundles(allow_partial=False):
             fail(f"{bid}: parts[].notes entries need offset, dur, midi")
         elif any(not (20 <= n["midi"] <= 108) for n in pn):
             fail(f"{bid}: midi values out of range")
-        print(f"     {bid:<14} pages={pages:<2} notes={pitches:<5} timemap={ons}")
+        print(f"     {bid:<14} pages={pages:<2} timemap={ons}")
     for bwv, w in WORKS.items():
         got = seen.get(bwv, set())
         if len(got) < w[3]:

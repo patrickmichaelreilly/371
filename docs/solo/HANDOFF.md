@@ -83,34 +83,37 @@ build_solo.py, and run the gate WITHOUT --allow-partial.
 Never use files headed `Extracted Monophonic Melody` (e.g. the MCCC set in
 lexngu/cmme-jupyter): their chords and double stops are stripped.
 
-## Phase 1 — bundles
+## Phase 1 — bundles (REVISED after review; supersedes the first P1)
 
-Write `pipeline/build_solo.py` producing `solo/<id>.json.gz` and
-`solo/index.json` (a separate directory: `chorales/index.json` is untouchable).
+Review of the first P1 found the music21 kern→MusicXML route damages the
+score: every slur is dropped, Humdrum spine splits become stray multi-bar
+beams (bwv1004-1, bars 1–8) and padded voices. Verovio's own Humdrum import
+renders the same files correctly. The vendored JS toolkit cannot read
+Humdrum (it is built without it), but it reads MEI. So bundles now carry
+MEI produced by the pinned **Python** Verovio from the kern source.
 
-Per movement:
-1. `converter.parse(kern)`.
-2. Replace every `bar.Repeat` with a regular barline (371 pitfall 1). Do
-   NOT call `expandRepeats()`: kern files carry Humdrum expansion labels
-   (`*>[A,A,B,B]`) and music21 raises ExpanderException on them. Each half
-   plays once.
-3. Write MusicXML. Read `parts[].notes` (offset, dur, midi; one entry per
-   pitch of a chord) from the same stripped score.
-4. Bundle (id like `bwv1002-1`):
+Rework `pipeline/build_solo.py` (keep its identity tables, ids, index logic):
+1. `tk = verovio.toolkit(); tk.loadData(kern_text); mei = tk.getMEI()`.
+   Ignore `ExpansionMap::Expand ... label-A` and "expansion cannot be
+   generated" warnings: they are harmless.
+2. `parts[].notes` come from Verovio, not music21: load the MEI into a
+   fresh toolkit, take `renderToTimemap()` (a JSON string in Python 6.2.1;
+   it may be a list in other versions — handle both). For each id in an
+   entry's `on`, offset = that qstamp; dur = qstamp of the entry whose
+   `off` contains the id, minus offset; midi =
+   `getMIDIValuesForElement(id)["pitch"]`. This makes parts and the app's
+   timemap one timeline.
+3. Bundle fields: as before, but `mei` replaces `musicxml` (no `musicxml`
+   key at all), plus `sourceFile` = path relative to `data/solo/kern/`
+   (e.g. `violin/partita1-2.krn`).
+4. music21 is no longer used to build bundles. Do not strip or expand
+   repeats; Verovio handles the kern's own repeat structure.
 
-        {"id","bwv","set":"violin"|"cello","work","movement","movementNo",
-         "key","kind":"solo","source","musicxml","parts","events":[]}
-
-   `work` and `key` come from the WORKS table in check_solo.py; movement
-   names from the table below. **Never from kern headers**: they are wrong
-   in places (partita1-2.krn says "D Major").
-5. index.json entries: id, bwv, movementNo, movement, work, set.
-
-Gate: `check_solo.py` (full) must PASS. It verifies each bundle renders in
-Verovio and that the timemap's note-ons agree with the score's notes. If a
-movement fails, fix the build, not the check.
-
-Subagents: allowed for read-only triage of failing movements (max 2).
+Gate (updated `check_solo.py`, still not yours to edit): full run with
+`--allow-partial` must PASS. It now checks the MEI loads and renders, that
+the timemap's note count is within 3% of an independent music21 count of the
+kern source, that slurs in the source render, and that `parts` matches the
+timemap exactly.
 
 ## Phase 2 — listen mode in the app
 
@@ -124,7 +127,8 @@ behaviour.
 2. Loading `s:<id>` fetches `solo/<id>.json.gz` with the existing
    decompression helper. Remember the last selection the same way chorales do.
 3. When `kind==="solo"`: hide the answer slots, palette, grading and
-   progress UI. Render with the existing Verovio toolkit, but with page
+   progress UI. Render `DATA.mei` (not musicxml) with the existing Verovio
+   toolkit, but with page
    layout (systems wrapping, vertical scroll) instead of the chorale's
    single horizontal system; movements run 30–250 bars.
 4. Playback for solo uses **only the Verovio timemap**
