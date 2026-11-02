@@ -5,8 +5,8 @@ Sonatas & Partitas BWV 1001-1006, cello Suites BWV 1007-1012).
 
 For every movement found under data/solo/kern/{violin,cello}/, produces:
   - solo/<id>.json.gz  bundle: {"id","bwv","set","work","movement",
-                       "movementNo","key","kind","source","musicxml",
-                       "parts","events"}
+                       "movementNo","key","kind","source","sourceFile",
+                       "mei","parts","events"}
   - solo/index.json    array of {id, bwv, movementNo, movement, work, set},
                        regenerated from the bundles after every run so the
                        index can never disagree with them.
@@ -17,28 +17,40 @@ separate solo/ directory.
 
 Usage:
     python pipeline/build_solo.py                  # build all movements
-    python pipeline/build_solo.py --id bwv1007-04  # rebuild one movement
+    python pipeline/build_solo.py --id bwv1007-4   # rebuild one movement
 
-Requires: pip install music21 verovio==6.2.1
+Requires: pip install verovio==6.2.1. music21 is NOT used here (its
+kern->MusicXML route drops every slur and mangles Humdrum spine splits);
+the gate uses music21 only as an independent counter of the kern source.
 
-READ docs/solo/HANDOFF.md BEFORE MODIFYING -- several steps below exist
-because of non-obvious music21/Verovio behaviors:
-  - repeats are neutralized WITHOUT expandRepeats(): kern files carry
-    Humdrum expansion labels (*>[A,A,B,B]) and music21 raises
-    ExpanderException on them; each half plays once (371 pitfall 1).
+READ docs/solo/HANDOFF.md (Phase 1, revised) BEFORE MODIFYING -- several
+steps below exist because of non-obvious Verovio/kern behaviors:
+  - bundles carry MEI straight from Verovio's own Humdrum import:
+    tk.loadData(kern_text) -> tk.getMEI(). ExpansionMap::Expand
+    "Element referenced in @plist not found" warnings are harmless.
+    NOTE "An expansion cannot be generated with more than one section"
+    is NOT harmless: it marks kerns with *>[A,A,B,B] but no *>norep
+    label (bwv1011-03/-04), for which Verovio auto-expands at
+    render/timemap time and mints synthetic "-rend2" note ids -- see
+    the BLOCKED entry in docs/solo/STATUS.md.
+  - repeats are neither stripped nor expanded: Verovio follows the kern's
+    own repeat structure.
+  - parts[].notes come from that same Verovio timemap, so parts and the
+    app's playback share one timeline: offset = the qstamp of the entry
+    whose `on` holds the note id; dur = the qstamp of the entry whose
+    `off` holds it, minus offset; midi = getMIDIValuesForElement(id).
   - work/key/movement names come from the WORKS table + the HANDOFF
     movement table, NEVER from kern headers (they are wrong in places,
-    e.g. partita1-2.krn claims "D Major").
+    e.g. partita1-2.krn claims "D Major"); the MEI's own title is
+    rewritten from our tables for the same reason.
 """
-import argparse, gzip, json, re, sys, warnings
+import argparse, gzip, json, re, sys
 from pathlib import Path
 
-warnings.filterwarnings("ignore")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "pipeline"))
 from check_solo import WORKS  # single source of truth for work titles/keys
 
-from music21 import converter, bar
 import verovio
 
 # violin filename prefix -> BWV (sonata/partita numbering: 1->1, 2->3, 3->5)
@@ -101,19 +113,45 @@ def movement_name(bwv: int, movementNo: int, split: bool) -> str:
     sys.exit(f"BWV {bwv}: movementNo {movementNo} outside the HANDOFF table")
 
 
-def strip_repeats(score):
-    """Replace every bar.Repeat with a regular barline (371 pitfall 1).
-    Do NOT call expandRepeats(): the kern expansion labels (*>[A,A,B,B])
-    raise ExpanderException; each half plays once."""
-    for m in score.recurse().getElementsByClass("Measure"):
-        for att in ("leftBarline", "rightBarline"):
-            if isinstance(getattr(m, att), bar.Repeat):
-                setattr(m, att, bar.Barline("regular"))
-
-
 def tmap(tk):
     r = tk.renderToTimemap()
     return json.loads(r) if isinstance(r, str) else r
+
+
+def timemap_notes(tk, bid):
+    """parts[].notes straight from the toolkit's own timemap -- the exact
+    timeline the app plays back (Phase 1 step 2): for each id in an
+    entry's `on`, offset = that qstamp; dur = the qstamp of the entry
+    whose `off` contains the id, minus offset; midi =
+    getMIDIValuesForElement(id)["pitch"]. Exits loudly if an on id has no
+    MIDI pitch (e.g. a rest leaking into the timemap)."""
+    tm = tmap(tk)
+    off_q = {}
+    for e in tm:
+        for nid in e.get("off") or []:
+            off_q.setdefault(nid, float(e["qstamp"]))
+    notes = []
+    for e in tm:
+        q = float(e["qstamp"])
+        for nid in e.get("on") or []:
+            v = tk.getMIDIValuesForElement(nid)
+            pitch = v.get("pitch") if isinstance(v, dict) else None
+            if not isinstance(pitch, int) or pitch <= 0:
+                sys.exit(f"{bid}: timemap id {nid} has no MIDI pitch "
+                         f"(got {v!r}) -- unexpected rest in timemap?")
+            notes.append({"offset": q, "dur": off_q.get(nid, q) - q,
+                          "midi": int(pitch)})
+    return notes
+
+
+def set_mei_title(mei: str, title: str) -> str:
+    """Replace the first header <title> with our table identity (kern
+    headers are unreliable). Leaves the MEI untouched if it has no
+    <titleStmt>."""
+    new, n = re.subn(r"(<titleStmt>\s*<title[^>]*>).*?(</title>)",
+                     lambda m: m.group(1) + title + m.group(2),
+                     mei, count=1, flags=re.S)
+    return new if n else mei
 
 
 def build_one(kern: Path, out_dir: Path, split: bool):
@@ -123,50 +161,47 @@ def build_one(kern: Path, out_dir: Path, split: bool):
     work, key = WORKS[bwv][1], WORKS[bwv][2]
     movement = movement_name(bwv, movementNo, split)
 
-    score = converter.parse(str(kern))
-    strip_repeats(score)
-
-    # Correct identity from our tables; kern header titles are unreliable
-    # (spec: never use them).
-    if score.metadata is not None:
-        score.metadata.title = f"{work}, {movement}"
-
-    xml_path = ROOT / "build" / f"_solo_{bid}.musicxml"
-    xml_path.parent.mkdir(exist_ok=True)
-    score.write("musicxml", fp=str(xml_path))
-    xml = xml_path.read_text()
-
-    # ---- self-check, mirroring the gate's arithmetic (informational:
-    #      pipeline/check_solo.py remains the referee) ----
-    chk = converter.parse(str(xml_path))
-    if list(chk.recurse().getElementsByClass(bar.Repeat)):
-        sys.exit(f"{bid}: repeat barlines survived in written musicxml")
-    pitches = sum(len(n.pitches) for n in chk.recurse().notes
-                  if not n.duration.isGrace)
-    graces = sum(len(n.pitches) for n in chk.recurse().notes
-                 if n.duration.isGrace)
+    kern_text = kern.read_text()
     tk = verovio.toolkit()
-    if not tk.loadData(xml):
-        sys.exit(f"{bid}: verovio loadData failed")
-    pages = tk.getPageCount()
-    ons = sum(len(e["on"]) for e in tmap(tk) if e.get("on"))
-    if not (pitches <= ons <= pitches + graces):
-        sys.exit(f"{bid}: timemap note-ons {ons} vs score pitches {pitches} "
-                 f"(+{graces} grace) -- repeats or ties not handled")
-    print(f"  {bid:<13} pages={pages:<2} pitches={pitches:<5} "
-          f"graces={graces:<3} timemap ons={ons}")
+    if not tk.loadData(kern_text):
+        sys.exit(f"{bid}: verovio could not load the kern source")
+    mei = tk.getMEI()
+    if not mei.lstrip().startswith("<?xml"):
+        mei = '<?xml version="1.0" encoding="UTF-8"?>\n' + mei
+    mei = set_mei_title(mei, f"{work}, {movement}")
 
-    # ---- parts[].notes from the SAME stripped score; one entry per pitch
-    #      of a chord. Rests excluded (no midi); graces included (sounding
-    #      pitches). Playback timing in the app comes from the Verovio
-    #      timemap, not these offsets (qstamps drift near pickups). ----
-    fallback = {"violin": "Violin", "cello": "Cello"}[setname]
-    parts = []
-    for part in score.parts:
-        notes = [{"offset": float(n.offset), "dur": float(n.quarterLength),
-                  "midi": int(p.midi)}
-                 for n in part.flatten().notes for p in n.pitches]
-        parts.append({"name": part.partName or fallback, "notes": notes})
+    # ---- self-check, mirroring the gate's checks (informational:
+    #      pipeline/check_solo.py remains the referee) ----
+    chk = verovio.toolkit()
+    if not chk.loadData(mei):
+        sys.exit(f"{bid}: verovio cannot re-load the generated MEI")
+    pages = chk.getPageCount()
+    ons = sum(len(e["on"]) for e in tmap(chk) if e.get("on"))
+    notes = timemap_notes(chk, bid)
+    if len(notes) != ons:
+        sys.exit(f"{bid}: parts notes {len(notes)} != timemap note-ons {ons}")
+    bad = [n["midi"] for n in notes if not 20 <= n["midi"] <= 108]
+    if bad:
+        sys.exit(f"{bid}: midi values out of range: {bad[:5]}")
+    if "(" in kern_text and 'class="slur' not in chk.renderToSVG(1):
+        # same condition as the gate's slur check -- informational only,
+        # the gate stays the referee (note: a '(' inside a !!! comment
+        # record, e.g. the bibliographic !!!SCA line, trips this heuristic
+        # even when the music has no slurs)
+        print(f"  WARN {bid}: '(' in kern source but page 1 renders no slur")
+    print(f"  {bid:<13} pages={pages:<2} ons={ons}")
+
+    debug_mei = ROOT / "build" / f"_solo_{bid}.mei"
+    debug_mei.parent.mkdir(exist_ok=True)
+    debug_mei.write_text(mei)
+
+    # Solo works are one staff; all timemap notes go under that one part.
+    # Timing comes from the timemap in the app too (single timeline).
+    label = re.search(r'<staffDef[^>]*\blabel="([^"]*)"', mei)
+    name = {"violin": "Violin", "cello": "Cello"}[setname]
+    if label and label.group(1).strip():
+        name = label.group(1).strip()
+    parts = [{"name": name, "notes": notes}]
 
     source = (f"KernScores, Craig Sapp / CCARH "
               f"(users/craig/classical/bach/{setname}/{kern.name}); bytes "
@@ -174,8 +209,9 @@ def build_one(kern: Path, out_dir: Path, split: bool):
               f"docs/solo/INVENTORY.md")
     bundle = {"id": bid, "bwv": bwv, "set": setname, "work": work,
               "movement": movement, "movementNo": movementNo, "key": key,
-              "kind": "solo", "source": source, "musicxml": xml,
-              "parts": parts, "events": []}
+              "kind": "solo", "source": source,
+              "sourceFile": f"{setname}/{kern.name}",
+              "mei": mei, "parts": parts, "events": []}
     gz = gzip.compress(json.dumps(bundle).encode("utf-8"), mtime=0)
     (out_dir / f"{bid}.json.gz").write_bytes(gz)
     return {"id": bid, "bwv": bwv, "movementNo": movementNo,
@@ -196,7 +232,7 @@ def rebuild_index(out_dir: Path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--id", help="rebuild a single movement, e.g. bwv1007-04")
+    ap.add_argument("--id", help="rebuild a single movement, e.g. bwv1007-4")
     a = ap.parse_args()
     kern_dir = ROOT / "data/solo/kern"
     kfiles = sorted(kern_dir.glob("*/*.krn"))
