@@ -1,5 +1,140 @@
 # Solo works — status log
 
+## P3 — 2026-11-02
+
+Final summary of the whole solo-works effort:
+
+- **Bundles built:** 28 of ~75 movements, from the 28-file partial kern set
+  (P0). Violin: bwv1001-4; 1002-2/3/4/6/8; 1003-4; 1004-1/4; 1005-4;
+  1006-6/7. Cello: 1007-1…7 (Suite 1 complete); 1010-1…7 (Suite 4
+  complete); 1011-3/4. Every bundle: MEI straight from Python Verovio
+  6.2.1's Humdrum import, `parts[].notes` derived from that same toolkit's
+  timemap (parts count == timemap note-ons, one timeline), `events: []`,
+  identity from the WORKS/HANDOFF tables, `sourceFile` recorded.
+- **Failures over the course of the work:** first P1 (music21 kern→MusicXML
+  route) was rejected in review — it dropped every slur and truncated at
+  mid-file spine splits (bwv1002-8 shipped without bars 21–70); redone per
+  the revised Phase 1. The P1 redo then hit 6 gate failures, written up as
+  BLOCKED with evidence; 4 were gate bugs (raw-text slur grep matching a
+  `!!!SCA:` comment; page-1-only slur check; music21 as "independent"
+  counter) and 2 were real data gaps (bwv1011-03/04 lacked `*>norep`,
+  so Verovio expanded repeats into `-rend2` ids) — the reviewer fixed the
+  gate and made the canon edits, and the gate has passed on every run since.
+  No failures remain open.
+- **What to review:** the sw.js delta (below), SPEC.md pitfalls 10–12 +
+  solo Status entry, README paragraph + attribution, the two rebuilt
+  scordatura bundles bwv1011-3/4 (canon `*>norep[A,B]` edit documented in
+  INVENTORY.md), and docs/solo/INVENTORY.md's missing-movement list for the
+  rebuild when KernScores returns.
+
+Done:
+- `sw.js`: `solo/index.json` added to the SHELL precache (install-time
+  `addAll`). Solo movement bundles needed no new handler: the existing
+  `.json.gz` branch is extension-based and already served
+  `solo/<id>.json.gz` cache-first from DATA_CACHE exactly like chorale
+  bundles — comments updated to say so honestly ("chorale + solo movement
+  bundles"; shell comment mentions both picker lists). No chorale behaviour
+  change: same caches, same handlers, VERSION still `v1` (deliberate: a
+  bump would delete the data cache and discard every visited chorale
+  bundle; unchanged VERSION means the new SW byte-diff triggers
+  reinstall and `addAll` merges `solo/index.json` into the existing
+  SHELL cache). `node --check sw.js` passes.
+- SPEC.md: pitfalls 10–12 added per HANDOFF — 10 expansion labels vs
+  `expandRepeats()` (music21 never; Verovio's ExpansionMap auto-expands
+  `*>[A,A,B,B]` without `*>norep` into `-rend2` replays, gate bans `rend`
+  ids, ExpansionMap warnings harmless), 11 Verovio qstamps ≠ music21
+  offsets (pickup drift, partita1-2 99.25 vs 95.25; one timeline per
+  pipeline; `getMIDIValuesForElement` returns `{}` until
+  `renderToTimemap()` has run), 12 kern `!!!` headers unreliable for
+  identity (`!!!SCA:` stray-paren false positive included). Plus a
+  solo-library entry in the Status section.
+- README.md: one paragraph on the listen-and-read library (what it is,
+  partial set with pointer to INVENTORY.md, build/gate scripts) and an
+  Attribution line: KernScores, Craig Sapp / CCARH.
+- Final gates both run fresh on this tree (raw outputs below):
+  `check_solo.py --allow-partial` exit 0, smoke test exit 0.
+
+Not done / known issues:
+- PARTIAL SET as in P0–P2: KernScores still unreachable; gate run with
+  `--allow-partial` and the 10 coverage warnings are the expected ones.
+  When it returns: re-run the P0 fetch for the missing files, rebuild with
+  `build_solo.py`, run the gate WITHOUT `--allow-partial`.
+- Test tooling still lives outside the repo (as in P2; commands documented
+  in `tests/smoke_solo.mjs`).
+
+Gate output (raw, `check_solo.py --allow-partial`, exit code 0):
+```
+== check_solo.py phase>=1
+ok   chorale bundles, chorales/index.json, build_chorale.py, build_corpus.py unchanged
+ok   28 kern files under data/solo/kern/
+     bwv1001-4      pages=2  timemap=812
+     bwv1002-2      pages=1  timemap=380
+     bwv1002-3      pages=2  timemap=476
+     bwv1002-4      pages=2  timemap=955
+     bwv1002-6      pages=1  timemap=299
+     bwv1002-8      pages=2  timemap=554
+     bwv1003-4      pages=2  timemap=1021
+     bwv1004-1      pages=2  timemap=547
+     bwv1004-4      pages=2  timemap=910
+     bwv1005-4      pages=3  timemap=1196
+     bwv1006-6      pages=1  timemap=275
+     bwv1006-7      pages=1  timemap=333
+     bwv1007-1      pages=2  timemap=657
+     bwv1007-2      pages=1  timemap=474
+     bwv1007-3      pages=1  timemap=371
+     bwv1007-4      pages=1  timemap=157
+     bwv1007-5      pages=1  timemap=134
+     bwv1007-6      pages=1  timemap=130
+     bwv1007-7      pages=1  timemap=213
+     bwv1010-1      pages=2  timemap=822
+     bwv1010-2      pages=1  timemap=535
+     bwv1010-3      pages=2  timemap=468
+     bwv1010-4      pages=1  timemap=215
+     bwv1010-5      pages=1  timemap=408
+     bwv1010-6      pages=1  timemap=69
+     bwv1010-7      pages=2  timemap=476
+     bwv1011-3      pages=1  timemap=265
+     bwv1011-4      pages=1  timemap=108
+warn BWV 1001: 1 movements bundled, expected >= 4
+warn BWV 1002: 5 movements bundled, expected >= 8
+warn BWV 1003: 1 movements bundled, expected >= 4
+warn BWV 1004: 2 movements bundled, expected >= 5
+warn BWV 1005: 1 movements bundled, expected >= 4
+warn BWV 1006: 2 movements bundled, expected >= 7
+warn BWV 1008: 0 movements bundled, expected >= 6
+warn BWV 1009: 0 movements bundled, expected >= 6
+warn BWV 1011: 2 movements bundled, expected >= 6
+warn BWV 1012: 0 movements bundled, expected >= 6
+     PARTIAL SET: coverage warnings above are expected until KernScores is reachable; see docs/solo/INVENTORY.md
+ok   28 solo bundles valid
+== PASS  (0 failures, 10 warnings)
+```
+
+Smoke test output (raw, `node tests/smoke_solo.mjs`, exit code 0):
+```
+PASS chorale 1 loads with answer slots
+PASS chorale 1 selected by default
+PASS chorale 1: palette visible
+PASS chorale 1: no console errors
+PASS s:bwv1002-2: SVG rendered with notes (380 note groups)
+PASS s:bwv1002-2: slots and palette hidden
+PASS s:bwv1002-2: no console errors
+PASS s:bwv1002-2: >=1 note highlighted after 2 s of playback
+PASS s:bwv1004-4: SVG rendered with notes (910 note groups)
+PASS s:bwv1004-4: slots and palette hidden
+PASS s:bwv1004-4: no console errors
+PASS s:bwv1004-4: >=1 note highlighted after 2 s of playback
+PASS s:bwv1007-1: SVG rendered with notes (657 note groups)
+PASS s:bwv1007-1: slots and palette hidden
+PASS s:bwv1007-1: no console errors
+PASS s:bwv1007-1: >=1 note highlighted after 2 s of playback
+PASS back to chorale 1: slots visible and populated
+PASS back to chorale 1: palette visible
+PASS back to chorale 1: no console errors
+```
+
+Waiting for review.
+
 ## P2 — 2026-11-02
 Done:
 - `index.html` picker: after `chorales/index.json`, also loads
