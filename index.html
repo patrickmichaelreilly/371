@@ -38,13 +38,13 @@
   #resetbtn{cursor:pointer;color:var(--ink-soft);text-decoration:underline;
             background:none;border:none;font:inherit;letter-spacing:inherit;
             text-transform:inherit;padding:0}
-  #space{width:70px;accent-color:var(--ink);height:14px}
 
   /* ---- scroll region: staff + slots ---- */
-  #scroller{flex:1 1 auto;overflow-x:auto;overflow-y:hidden;touch-action:pan-x pan-y;
+  #scroller{flex:1 1 auto;overflow:auto;touch-action:pan-x pan-y;
             position:relative;background:
             linear-gradient(var(--paper) 0%, var(--paper-deep) 100%)}
-  #content{position:relative;height:100%;min-width:100%}
+  #content{position:relative;min-height:100%;min-width:100%;
+           height:calc(min(46vh,300px)*var(--zoom,1) + 120px*var(--zoom,1))}
   #staff{padding:8px 24px 0}
   #staff svg{height:calc(min(46vh,300px)*var(--zoom,1));width:auto;display:block}
   #staff svg *{color:var(--ink)}
@@ -58,16 +58,18 @@
   /* ---- solo (listen-and-read) mode: body.solo ---- */
   body.solo #slots,body.solo #palette,body.solo #progspan,
   body.solo #resetbtn{display:none}
-  body.solo #scroller{overflow:auto;touch-action:pan-x pan-y}
-  body.solo #content{height:auto;min-height:100%}
-  body.solo #staff{padding:10px 10px 60px}
-  body.solo #staff svg{width:100%;height:auto;max-width:1100px;margin:0 auto}
+  /* solo uses the chorale's single horizontal system; no answer row.
+     One staff, not four: size it so a staff matches a chorale staff */
+  body.solo #staff svg{height:calc(min(46vh,300px)*.3*var(--zoom,1))}
+  body.solo #content{height:calc(min(46vh,300px)*.3*var(--zoom,1) + 40px)}
   /* Verovio strokes use currentColor but glyphs (noteheads) are filled with
      no fill set, so they default to black: highlight needs fill as well */
   #staff svg g.playing,#staff svg g.playing *{color:var(--red);fill:var(--red)}
 
-  #slots{position:absolute;left:0;right:0;height:74px;top:calc(min(46vh,300px) + 14px)}
-  .slot{position:absolute;transform:translateX(-50%);min-width:36px;height:64px;
+  #slots{position:absolute;left:0;right:0;height:calc(74px*var(--zoom,1));
+          top:calc((min(46vh,300px) + 14px)*var(--zoom,1))}
+  .slot{position:absolute;transform:translateX(-50%) scale(var(--zoom,1));
+        transform-origin:50% 0;min-width:36px;height:64px;
         display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
         cursor:pointer;user-select:none;-webkit-user-select:none}
   .slot .tick{width:1px;height:8px;background:var(--rule)}
@@ -132,9 +134,6 @@
     <span>Key <b id="mkey">–</b></span>
     <span id="progspan">Progress <b id="mprog">0/0</b></span>
     <span><button id="resetbtn">reset</button></span>
-    <span style="margin-left:auto;display:flex;align-items:center;gap:5px">Spacing
-      <input id="space" type="range" min="0" max="100" value="50">
-    </span>
   </div>
   <div id="transport">
     <button id="playbtn" aria-label="play or stop">&#9654;</button>
@@ -217,13 +216,6 @@ async function toolkit(){
   await vrvReady;
   if(!TK){
     TK=new verovio.toolkit();
-    /* Phase 4 test hook: count real toolkit entries (smoke test asserts
-       the spacing preview makes none). No behaviour change. */
-    for(const m of ['setOptions','loadData','redoLayout','renderToSVG',
-                    'renderToTimemap','getPageCount']){
-      const f=TK[m].bind(TK);
-      TK[m]=(...a)=>{window.__vrv=(window.__vrv||0)+1;return f(...a);};
-    }
   }
   return TK;
 }
@@ -288,7 +280,7 @@ const scroller=document.getElementById('scroller'),
       cursor=document.getElementById('cursor'),
       loadmsg=document.getElementById('loadmsg'),
       pick=document.getElementById('pick'),
-      spaceEl=document.getElementById('space');
+      SPACING=.5;                 /* medium anchor; zoom replaced the slider */
 
 async function fetchBundle(url){
   const r=await fetch(url);
@@ -304,7 +296,7 @@ async function fetchBundle(url){
 /* render (or re-space) the current chorale and rebuild the slot mapping */
 async function renderScore(reload){
   const tk=await toolkit(), token=loadToken;
-  tk.setOptions(vrvOptions(+spaceEl.value/100));
+  tk.setOptions(vrvOptions(SPACING));
   if(reload) tk.loadData(DATA.musicxml);
   else tk.redoLayout();
   if(token!==loadToken) return;             /* superseded by another load */
@@ -457,28 +449,14 @@ function setupSolo(data){
   document.getElementById('mprog').textContent='–';
   resetState();
   content.style.width='';          /* drop the chorale layout's inline width */
-  staffEl.innerHTML='';scroller.scrollTop=0;
+  staffEl.innerHTML='';scroller.scrollLeft=0;scroller.scrollTop=0;
   msg('Press play, or tap a note to start from there.');
   renderSolo(true);
 }
 
-/* page layout: staff px on screen ≈ 1.27·W·scale/pageWidth (measured in
-   Verovio 6.2.x at scale 100) — pick pageWidth for a readable staff */
-function soloOptions(){
-  const [lin,nonlin]=spacingFor(+spaceEl.value/100);
-  const W=Math.min(Math.max(300,scroller.clientWidth-20),1100);
-  const staffPx=Math.min(48,Math.max(21,W/17));
-  /* zoom: smaller pageWidth = fewer units across the same css width =
-     bigger staff on screen (on-screen staff px ≈ staffPx·zoom) */
-  return {breaks:'auto',adjustPageHeight:true,adjustPageWidth:false,
-          pageWidth:Math.max(500,Math.round(127*W/staffPx/zoom)),scale:100,
-          footer:'none',header:'none',
-          spacingLinear:lin,spacingNonLinear:nonlin};
-}
-
 async function renderSolo(reload){
   const tk=await toolkit(),token=loadToken;
-  tk.setOptions(soloOptions());
+  tk.setOptions(vrvOptions(SPACING));
   if(reload&&!tk.loadData(DATA.mei)){
     if(token===loadToken){
       loadmsg.textContent='Could not engrave this movement.';
@@ -488,14 +466,10 @@ async function renderSolo(reload){
   }
   if(!reload)tk.redoLayout();
   if(token!==loadToken)return;
-  const keep=scroller.scrollTop,pages=[],n=tk.getPageCount();
-  for(let p=1;p<=n;p++){
-    if(token!==loadToken)return;
-    pages.push(tk.renderToSVG(p));
-  }
+  const svg=tk.renderToSVG(1);       /* breaks:'none' -> one system, one page */
   if(token!==loadToken)return;
-  staffEl.innerHTML=pages.join('');
-  scroller.scrollTop=keep;
+  staffEl.innerHTML=svg;
+  layout();
   loadmsg.style.display='none';
   if(reload)buildSoloPlayback(tk);
 }
@@ -554,9 +528,10 @@ function soloRaf(q){
 function soloKeepInView(id){
   const el=document.getElementById(id);if(!el)return;
   const r=el.getBoundingClientRect(),s=scroller.getBoundingClientRect();
-  const m=s.height*.18;
-  if(r.top-s.top<m)scroller.scrollTop+=r.top-s.top-m;
-  else if(s.bottom-r.bottom<m)scroller.scrollTop+=m-(s.bottom-r.bottom);
+  /* horizontal, like the chorale playhead: keep the sounding note in the
+     15%-70% band, re-centre it at 38% when it leaves */
+  const x=r.left-s.left;
+  if(x<s.width*.15||x>s.width*.7)scroller.scrollLeft+=x-s.width*.38;
 }
 
 /* tap a note: playback starts from it (a drag-scroll is not a tap) */
@@ -622,9 +597,12 @@ async function init(){
    (never the whole note group — lyrics/extenders skew it; pitfall 2). */
 function layout(){
   if(!DATA) return;
-  if(isSolo()){content.style.width='';return;}
   const svg=staffEl.querySelector('svg');
   if(!svg) return;
+  if(isSolo()){
+    content.style.width=(svg.getBoundingClientRect().width+240)+'px';
+    return;
+  }
   const cRect=content.getBoundingClientRect(), sRect=svg.getBoundingClientRect();
   let prevX=-Infinity, monotone=true;
   DATA.events.forEach((e,i)=>{
@@ -644,148 +622,91 @@ function layout(){
 }
 window.addEventListener('resize',layout);
 
-/* ================= pinch zoom + live spacing (Phase 4) =================
-   Two-stage: while the gesture runs, a CSS transform on #staff gives an
-   immediate preview — no Verovio calls mid-gesture (window.__vrv counts
-   toolkit entries for the smoke test). On gesture end the transform is
-   removed and Verovio re-renders once (redoLayout — ids stay stable, SPEC
-   pitfall 3 / P2), then the scroll position is restored so the musical
-   point under the pinch midpoint (or wheel cursor) stays put. Zoom
-   persists per corpus in localStorage (try/catch like the other keys). */
+/* ========================= zoom (both corpora) =========================
+   One control, CSS only: --zoom on #content scales the staff SVG (vector,
+   so it stays crisp), the answer row and the slot boxes together, so the
+   blanks can never drift from their notes. No Verovio call on zoom.
+   While a gesture runs, #content gets a transform by the RATIO to the
+   committed zoom (preview); on release the ratio becomes the new --zoom,
+   slots are re-measured, and the scroll is set so the musical point under
+   the fingers (or cursor) stays put. Persisted per corpus. */
 let zoom=1;                       /* committed zoom of the current corpus */
+const ZMIN=.5, ZMAX=3;
 function zoomKey(){return isSolo()?'zoom:solo':'zoom:chorale';}
 function loadZoom(){
-  try{zoom=Math.min(3,Math.max(.5,parseFloat(localStorage.getItem(zoomKey()))||1));}
+  try{zoom=Math.min(ZMAX,Math.max(ZMIN,parseFloat(localStorage.getItem(zoomKey()))||1));}
   catch(_){zoom=1;}
   applyZoomVar();
 }
 function saveZoom(){try{localStorage.setItem(zoomKey(),String(zoom));}catch(_){}}
-function applyZoomVar(){staffEl.style.setProperty('--zoom',String(zoom));}
+function applyZoomVar(){content.style.setProperty('--zoom',String(zoom));}
 
-/* live preview: CSS transform on #staff only. Anchor (sx,sy) is a viewport
-   point that must stay put; zy==1 gives a pure horizontal (spacing) scale.
-   Uses offsetLeft/offsetWidth (layout coords — getBoundingClientRect of a
-   transformed element would feed back its own transform). */
-function previewXform(sx,sy,zx,zy){
+let gz=null;                      /* gesture: {z (target zoom), ax, ay, cx, cy} */
+function anchorAt(sx,sy){         /* viewport point -> point in content coords */
+  const r=scroller.getBoundingClientRect();
+  return {ax:sx,ay:sy,cx:sx-r.left+scroller.scrollLeft,cy:sy-r.top+scroller.scrollTop};
+}
+function preview(){
+  const k=gz.z/zoom;
+  content.style.transformOrigin=`${gz.cx}px ${gz.cy}px`;
+  content.style.transform=`scale(${k})`;
+}
+function zoomCommit(){
+  if(!gz)return;
+  const k=gz.z/zoom, g=gz; gz=null;
+  content.style.transform='';content.style.transformOrigin='';
+  zoom=g.z; applyZoomVar(); saveZoom();
+  layout();                       /* re-measure slots and content width */
+  const r=scroller.getBoundingClientRect();
+  scroller.scrollLeft=g.cx*k-(g.ax-r.left);
+  scroller.scrollTop=g.cy*k-(g.ay-r.top);
+}
+function zoomTo(z,sx,sy){
   if(!DATA)return;
-  const cR=content.getBoundingClientRect();
-  const lx=staffEl.offsetLeft,ly=staffEl.offsetTop;
-  const W=staffEl.offsetWidth||1,H=staffEl.offsetHeight||1;
-  const axl=(sx==null?lx+W/2:sx-cR.left)-lx;
-  const ayl=(sy==null?ly+H/2:sy-cR.top)-ly;
-  staffEl.style.transformOrigin='0 0';
-  staffEl.style.transform=
-    `translate(${((1-zx)*axl).toFixed(1)}px,${((1-zy)*ayl).toFixed(1)}px)`+
-    ` scale(${zx},${zy})`;
-}
-function clearPreview(){
-  staffEl.style.transform='';staffEl.style.transformOrigin='';
+  z=Math.min(ZMAX,Math.max(ZMIN,z));
+  if(!gz)gz={z,...anchorAt(sx,sy)};
+  gz.z=z; preview();
 }
 
-/* commit after a zoom gesture: re-render once, then put the musical point
-   that sat under (ax,ay) back under it. Chorale: zoom is a CSS height
-   factor (--zoom, the svg keeps its base height rule); solo: pageWidth
-   divides by zoom inside soloOptions(), so the re-render truly re-wraps. */
-async function commitZoom(ax,ay){
-  const svgBefore=staffEl.querySelector('svg');
-  const relX=svgBefore
-    ?(ax-svgBefore.getBoundingClientRect().left)
-     /(svgBefore.getBoundingClientRect().width||1):.5;
-  const keepT=scroller.scrollTop;
-  clearPreview();
-  applyZoomVar();
-  if(isSolo()) await renderSolo(false);
-  else await renderScore(false);
-  const svg=staffEl.querySelector('svg');
-  if(svg&&!isSolo()){
-    const r=svg.getBoundingClientRect();
-    scroller.scrollLeft+=r.left+r.width*relX-ax;
-  }else if(isSolo()){
-    scroller.scrollTop=keepT;
-  }
+/* touch pinch: the browser's own live touch list, so a finger lifted
+   outside the score can never leave a stale point behind (one-finger
+   drags must only ever scroll) */
+let pinch0=null;                  /* {d, z} at pinch start */
+const dist=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY)||1;
+scroller.addEventListener('touchstart',ev=>{
+  if(ev.touches.length===2&&DATA){
+    pinch0={d:dist(ev.touches),z:zoom};
+    const t=ev.touches;
+    gz={z:zoom,...anchorAt((t[0].clientX+t[1].clientX)/2,(t[0].clientY+t[1].clientY)/2)};
+  }else if(ev.touches.length!==2){pinch0=null;}
+},{passive:true});
+scroller.addEventListener('touchmove',ev=>{
+  if(!pinch0||ev.touches.length!==2)return;
+  ev.preventDefault();            /* ours, not the page's */
+  zoomTo(pinch0.z*dist(ev.touches)/pinch0.d);
+},{passive:false});
+function touchEnd(ev){
+  if(pinch0&&ev.touches.length<2){pinch0=null;zoomCommit();}
 }
-
-/* pointer pinch on the score area (two pointers) */
-const activePtrs=new Map();
-let pinch=null;                   /* {d0, z0, ax, ay} */
-scroller.addEventListener('pointerdown',ev=>{
-  activePtrs.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
-  if(activePtrs.size===2&&DATA){
-    const pts=[...activePtrs.values()];
-    pinch={d0:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y)||1,
-           z0:zoom,ax:(pts[0].x+pts[1].x)/2,ay:(pts[0].y+pts[1].y)/2};
-  }
-});
-scroller.addEventListener('pointermove',ev=>{
-  if(activePtrs.has(ev.pointerId))
-    activePtrs.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
-  if(!pinch||activePtrs.size<2)return;
-  const pts=[...activePtrs.values()];
-  const d=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y)||1;
-  zoom=Math.min(3,Math.max(.5,pinch.z0*d/pinch.d0));
-  pinch.ax=(pts[0].x+pts[1].x)/2;pinch.ay=(pts[0].y+pts[1].y)/2;
-  previewXform(pinch.ax,pinch.ay,zoom,zoom);
-});
-function endPinch(ev){
-  activePtrs.delete(ev.pointerId);
-  if(pinch&&activePtrs.size<2){
-    const p=pinch;pinch=null;
-    if(DATA){saveZoom();commitZoom(p.ax,p.ay);}
-  }
-}
-scroller.addEventListener('pointerup',endPinch);
+scroller.addEventListener('touchend',touchEnd);
+scroller.addEventListener('touchcancel',touchEnd);
 /* iOS Safari ignores user-scalable=no and runs its own page zoom alongside
    ours; its proprietary gesture events let us cancel it over the score */
 for(const t of ['gesturestart','gesturechange','gestureend'])
   scroller.addEventListener(t,ev=>ev.preventDefault(),{passive:false});
-scroller.addEventListener('pointercancel',endPinch);
 
-/* desktop zoom: Ctrl/Cmd + wheel (a trackpad pinch arrives the same way);
-   preventDefault ONLY here, so page zoom keeps working elsewhere */
+/* desktop: Ctrl/Cmd + wheel (a trackpad pinch arrives the same way);
+   preventDefault only then, so page zoom keeps working elsewhere */
 const coarse=matchMedia('(pointer:coarse)').matches;
+let wheelT=null;
 scroller.addEventListener('wheel',ev=>{
-  if(coarse||!DATA||!(ev.ctrlKey||ev.metaKey))return;   /* touch: pinch only */
+  if(coarse||!DATA||!(ev.ctrlKey||ev.metaKey))return;
   ev.preventDefault();
-  zoom=Math.min(3,Math.max(.5,zoom*(ev.deltaY<0?1.12:1/1.12)));
-  previewXform(ev.clientX,ev.clientY,zoom,zoom);
-  clearTimeout(commitZoom._t);
-  commitZoom._t=setTimeout(()=>{
-    if(!DATA)return;
-    saveZoom();commitZoom(ev.clientX,ev.clientY);
-  },220);
+  const z=(gz?gz.z:zoom)*Math.exp(-ev.deltaY*.0025);
+  if(!gz)gz={z:zoom,...anchorAt(ev.clientX,ev.clientY)};
+  zoomTo(z);
+  clearTimeout(wheelT); wheelT=setTimeout(zoomCommit,180);
 },{passive:false});
-
-/* spacing slider: same two-stage path — preview (scaleX, CSS only) on
-   `input`, commit (one Verovio re-render) on `change`, no timers.
-   Solo spacing changes system breaks, so the scaleX preview is
-   approximate there; the commit re-wraps (accepted by HANDOFF P4). */
-let spaceBase=null;               /* slider value at the last commit */
-function spaceProxy(t){const [l,n]=spacingFor(t);return (l+n)/2;}
-spaceEl.addEventListener('input',()=>{
-  if(!DATA)return;
-  const t=+spaceEl.value/100;
-  const base=spaceProxy(spaceBase==null?t:spaceBase)||1;
-  const s=Math.max(.2,Math.min(3,spaceProxy(t)/base));
-  previewXform(null,null,s,1);
-});
-spaceEl.addEventListener('change',async()=>{
-  if(!DATA)return;
-  clearPreview();
-  spaceBase=+spaceEl.value/100;
-  try{localStorage.setItem('space',spaceEl.value);}catch(_){}
-  const keepT=scroller.scrollTop,frac=(scroller.scrollLeft/
-    Math.max(1,scroller.scrollWidth-scroller.clientWidth));
-  if(isSolo()) await renderSolo(false);
-  else await renderScore(false);
-  if(isSolo()){scroller.scrollTop=keepT;}
-  else if(sel>=0)slots[sel].scrollIntoView({inline:'center',block:'nearest'});
-  else{
-    const sw=scroller.scrollWidth-scroller.clientWidth;
-    scroller.scrollLeft=frac*Math.max(0,sw);
-  }
-});
-spaceEl.value=localStorage.getItem('space')||'50';
-spaceBase=+spaceEl.value/100;
 
 function firstUnanswered(){
   if(!DATA) return -1;

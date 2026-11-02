@@ -131,7 +131,7 @@ try {
   await ctrlWheel(-240);                    /* one wheel tick: zoom 1 -> 1.12 */
   await page.waitForTimeout(150);           /* inside the commit debounce */
   const tfMid = await page.evaluate(
-    () => document.getElementById('staff').style.transform);
+    () => document.getElementById('content').style.transform);
   check('P4 chorale: transform preview present mid-gesture',
         /scale/.test(tfMid) && tfMid !== '');
   await page.waitForTimeout(600);           /* debounce 220 ms + re-render */
@@ -151,7 +151,7 @@ try {
   await page.reload({waitUntil: 'domcontentloaded'});
   await page.waitForSelector('#slots .slot', {timeout: 30000});
   const zVar = await page.evaluate(
-    () => document.getElementById('staff').style.getPropertyValue('--zoom'));
+    () => document.getElementById('content').style.getPropertyValue('--zoom'));
   check('P4 chorale: zoom restored after reload (--zoom=' + zVar + ')',
         parseFloat(zVar) > 1);
   const xsReload = await slotXs();
@@ -161,37 +161,37 @@ try {
   check('P4 chorale reload: no console errors', errors.length === 0);
   errors.length = 0;
 
-  /* --- P4: spacing slider — preview without Verovio, commit removes it --- */
-  const vrvBefore = await page.evaluate(() => window.__vrv || 0);
-  await page.evaluate(() => {
-    const s = document.getElementById('space');
-    s.value = '85';
-    s.dispatchEvent(new Event('input', {bubbles: true}));
+  /* --- zoom: blanks stay under their notes; the spacing slider is gone --- */
+  check('zoom: spacing slider removed', await page.locator('#space').count() === 0);
+  const misalign = () => page.evaluate(() => {
+    /* each slot's x vs the centre of the notehead it was assigned to */
+    const c = document.getElementById('content').getBoundingClientRect();
+    let worst = 0, n = 0;
+    for (const s of document.querySelectorAll('#slots .slot')) {
+      const x = +s.dataset.x, r = s.getBoundingClientRect();
+      worst = Math.max(worst, Math.abs((r.left + r.width / 2 - c.left) - x));
+      n++;
+    }
+    return {worst, n};
   });
-  const tfSpace = await page.evaluate(
-    () => document.getElementById('staff').style.transform);
-  const vrvDuring = await page.evaluate(() => window.__vrv || 0);
-  check('P4 spacing: input event previews via transform (got "' +
-        tfSpace.slice(0, 40) + '")', /scale/.test(tfSpace));
-  check('P4 spacing: preview makes zero Verovio calls',
-        vrvDuring === vrvBefore);
-  await page.evaluate(() => {
-    document.getElementById('space').dispatchEvent(
-      new Event('change', {bubbles: true}));
+  const svgH = () => page.evaluate(() =>
+    document.querySelector('#staff svg').getBoundingClientRect().height);
+  const h1 = await svgH();
+  for (let i = 0; i < 6; i++) await ctrlWheel(-200);
+  await page.waitForTimeout(500);
+  const h2 = await svgH();
+  const zNow = await page.evaluate(() => parseFloat(localStorage.getItem('zoom:chorale')));
+  check(`zoom: staff height follows zoom (x${(h2 / h1).toFixed(2)})`, h2 > h1 * 1.5);
+  const mz = await misalign();
+  check(`zoom: blanks centred under their notes at zoom ${zNow.toFixed(2)} (worst ${mz.worst.toFixed(1)} px)`,
+        mz.n > 0 && mz.worst < 2);
+  const belowStaff = await page.evaluate(() => {
+    const sv = document.querySelector('#staff svg').getBoundingClientRect();
+    const sl = document.querySelector('#slots .slot').getBoundingClientRect();
+    return sl.top >= sv.bottom - 4;
   });
-  await page.waitForTimeout(700);
-  const tfAfter = await page.evaluate(
-    () => document.getElementById('staff').style.transform);
-  const vrvAfter = await page.evaluate(() => window.__vrv || 0);
-  check('P4 spacing: change event commits and removes transform',
-        tfAfter === '');
-  check('P4 spacing: commit re-rendered via Verovio',
-        vrvAfter > vrvDuring);
-  const xsSpace = await slotXs();
-  check('P4 spacing: slots still strictly increasing after commit',
-        xsSpace.length === countBefore
-        && xsSpace.every((x, i) => i === 0 || x > xsSpace[i - 1]));
-  check('P4 spacing: no console errors', errors.length === 0);
+  check('zoom: answer row sits below the zoomed staff', belowStaff);
+  check('zoom: no console errors', errors.length === 0);
   errors.length = 0;
 
   /* --- P4: solo zoom during playback — highlight keeps running --- */
@@ -210,7 +210,51 @@ try {
   check('P4 solo: playback still running after zoom commit', stillOn);
   await page.click('#playbtn');             /* stop */
   await page.waitForTimeout(300);
+  const horiz = await page.evaluate(() => {
+    const sc = document.getElementById('scroller');
+    return {svgs: document.querySelectorAll('#staff > svg').length,
+            systems: document.querySelectorAll('#staff svg g.system').length,
+            wide: sc.scrollWidth > sc.clientWidth * 2};
+  });
+  check(`solo: one horizontal system (${horiz.systems} system, ${horiz.svgs} svg)`,
+        horiz.svgs === 1 && horiz.systems === 1 && horiz.wide);
   check('P4 solo: no console errors', errors.length === 0);
+  errors.length = 0;
+
+  /* --- touch: one finger only scrolls, two fingers zoom --- */
+  const tctx = await browser.newContext({viewport: {width: 400, height: 800},
+                                         hasTouch: true, isMobile: true});
+  const tp = await tctx.newPage();
+  tp.on('pageerror', e => errors.push(e.message));
+  await tp.goto(`${BASE}/index.html`, {waitUntil: 'domcontentloaded'});
+  await tp.waitForSelector('#slots .slot', {timeout: 60000});
+  await tp.selectOption('#pick', '1');
+  await tp.waitForSelector('#slots .slot', {timeout: 60000});
+  const cdp = await tctx.newCDPSession(tp);
+  const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent',
+    {type, touchPoints: pts.map(([x, y], i) => ({x, y, id: i}))});
+  const zOf = () => tp.evaluate(() =>
+    parseFloat(document.getElementById('content').style.getPropertyValue('--zoom')) || 1);
+  const z0 = await zOf();
+  await touch('touchStart', [[200, 200]]);
+  for (let i = 1; i <= 8; i++) await touch('touchMove', [[200 - i * 20, 200 + i * 5]]);
+  await touch('touchEnd', []);
+  await tp.waitForTimeout(300);
+  const z1 = await zOf();
+  check(`touch: one-finger drag does not zoom (${z0} -> ${z1})`, z1 === z0);
+  await touch('touchStart', [[170, 220], [230, 220]]);
+  for (let i = 1; i <= 8; i++) await touch('touchMove', [[170 - i * 12, 220], [230 + i * 12, 220]]);
+  await touch('touchEnd', []);
+  await tp.waitForTimeout(300);
+  const z2 = await zOf();
+  check(`touch: two-finger pinch zooms (${z1} -> ${z2.toFixed(2)})`, z2 > z1 * 1.5);
+  await touch('touchStart', [[200, 200]]);
+  for (let i = 1; i <= 8; i++) await touch('touchMove', [[200 - i * 20, 200]]);
+  await touch('touchEnd', []);
+  await tp.waitForTimeout(300);
+  check('touch: one-finger drag after a pinch still does not zoom', await zOf() === z2);
+  await tctx.close();
+  check('touch: no console errors', errors.length === 0);
 } finally {
   await browser.close();
   srv.kill();

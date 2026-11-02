@@ -1,5 +1,17 @@
 # Solo works — status log
 
+## Owner review after first deploy — 2026-11-02 (Claude session)
+Changed per owner: solo renders as the chorale's single horizontal system
+(page layout dropped); zoom replaces the spacing slider (spacing fixed at
+the medium anchor); zoom is one CSS-only control on #content, so staff,
+answer row and slot boxes scale together and blanks stay under their notes
+(no Verovio call on zoom); touch pinch uses the live touch list, fixing
+one-finger drags that zoomed (stale pointers from fingers lifted outside
+the score); the P4 commit() collided with the game's own commit(), so it
+is now zoomCommit(); the __vrv test hook is removed. Smoke test updated:
+40/40, including blank alignment at zoom 3 (0.0 px), one horizontal
+system for solo, and CDP touch tests (one finger scrolls, two zoom).
+
 ## P4 — 2026-11-02
 Done:
 - **Two-stage zoom + spacing in index.html, both corpora.** While the
