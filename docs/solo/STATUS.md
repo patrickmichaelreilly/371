@@ -1,5 +1,153 @@
 # Solo works — status log
 
+## P4 — 2026-11-02
+Done:
+- **Two-stage zoom + spacing in index.html, both corpora.** While the
+  gesture runs, a CSS `transform` on `#staff` previews immediately —
+  zero Verovio calls (asserted via a `window.__vrv` counter wrapped
+  around the toolkit entry points in `toolkit()`; no behaviour change).
+  On gesture end the transform is removed, Verovio re-renders once
+  (`redoLayout` — ids stable per P2), and the scroll position is
+  restored so the musical point under the gesture anchor stays put
+  (chorale: same relative x of the svg re-anchored under the pinch
+  midpoint / wheel cursor; solo: scrollTop kept, width is fixed).
+- **Zoom inputs:** two-pointer pinch on the score area via Pointer
+  Events (midpoint tracked live as the fingers move); desktop
+  Ctrl/Cmd + wheel over the score (trackpad pinch arrives the same
+  way), `preventDefault` ONLY when ctrl/meta held, debounced 220 ms
+  for the commit (wheel has no end event). Clamped 0.5×–3×.
+- **Zoom application per corpus:** chorale = CSS height factor
+  (`--zoom` var on `#staff`, svg keeps `height:calc(min(46vh,300px)*var(--zoom,1))`,
+  width auto) + one `renderScore(false)` re-render to re-derive ids;
+  solo = real re-wrap, `pageWidth` divides by zoom inside
+  `soloOptions()` (on-screen staff px ≈ staffPx·zoom). Persisted per
+  corpus as `zoom:chorale` / `zoom:solo` in localStorage, try/catch,
+  restored via `loadZoom()` in `setup()`/`setupSolo()`.
+- **Viewport meta relaxed** (`maximum-scale=1, user-scalable=no`
+  dropped — it fights two-pointer pinch; iOS Safari ignores
+  user-scalable anyway, but Android honoured it). `touch-action:
+  pan-x pan-y` on `#scroller` in both modes so the browser's page
+  zoom doesn't take over the score; page zoom untouched elsewhere.
+- **Spacing slider moved onto the same path:** preview on `input`
+  (scaleX, ratio of the piecewise-linear anchor proxies, CSS only),
+  commit on `change` (pointerup/keyup) — the 160 ms debounce timer is
+  gone. Solo commit restores scrollTop; chorale commit centres the
+  selected slot (as before) or keeps the relative scroll fraction.
+- **Invariants held:** after any commit the chorale slots are
+  re-measured (`renderScore`/`layout`) — strictly increasing asserted
+  in the smoke test after zoom commit, after reload, and after a
+  spacing commit; playback was zoomed mid-flight in solo in the smoke
+  test (highlight keeps running, playbtn stays on); chorale commits
+  re-derive `chosenIds` from the new svg+timemap so the playhead
+  cursor and grading keep working; zoom gestures never call
+  `stopPlayback` and never touch PLAY_NOTES/anchor times.
+- Smoke test additions in `tests/smoke_solo.mjs`: 17 new assertions
+  (36 total, all PASS, exit 0 — raw output below). Real two-finger
+  touch pinch **cannot be exercised headless** (Playwright can send
+  the Pointer Events but not a genuine browser gesture pipeline);
+  **owner to check pinch on a phone** — the wheel path, which shares
+  the whole preview/commit engine, is fully covered.
+
+Not done / known issues:
+- PARTIAL SET as in P0–P3: gate run with `--allow-partial`; the 10
+  coverage warnings are the expected ones.
+- During a pinch preview the slot overlay and cursor stay at layout
+  positions (they live outside the transformed `#staff`), so they can
+  drift from the previewed staff until the commit lands — visual
+  only, self-corrects at commit.
+- Wheel-zoom commit is debounced 220 ms (wheel has no end event);
+  pinch commits immediately on lifting the second finger.
+
+Gate output (raw, `check_solo.py --allow-partial`, exit code 0):
+```
+== check_solo.py phase>=1
+ok   chorale bundles, chorales/index.json, build_chorale.py, build_corpus.py unchanged
+ok   28 kern files under data/solo/kern/
+     bwv1001-4      pages=2  timemap=812
+     bwv1002-2      pages=1  timemap=380
+     bwv1002-3      pages=2  timemap=476
+     bwv1002-4      pages=2  timemap=955
+     bwv1002-6      pages=1  timemap=299
+     bwv1002-8      pages=2  timemap=554
+     bwv1003-4      pages=2  timemap=1021
+     bwv1004-1      pages=2  timemap=547
+     bwv1004-4      pages=2  timemap=910
+     bwv1005-4      pages=3  timemap=1196
+     bwv1006-6      pages=1  timemap=275
+     bwv1006-7      pages=1  timemap=333
+     bwv1007-1      pages=2  timemap=657
+     bwv1007-2      pages=1  timemap=474
+     bwv1007-3      pages=1  timemap=371
+     bwv1007-4      pages=1  timemap=157
+     bwv1007-5      pages=1  timemap=134
+     bwv1007-6      pages=1  timemap=130
+     bwv1007-7      pages=1  timemap=213
+     bwv1010-1      pages=2  timemap=822
+     bwv1010-2      pages=1  timemap=535
+     bwv1010-3      pages=2  timemap=468
+     bwv1010-4      pages=1  timemap=215
+     bwv1010-5      pages=1  timemap=408
+     bwv1010-6      pages=1  timemap=69
+     bwv1010-7      pages=2  timemap=476
+     bwv1011-3      pages=1  timemap=265
+     bwv1011-4      pages=1  timemap=108
+warn BWV 1001: 1 movements bundled, expected >= 4
+warn BWV 1002: 5 movements bundled, expected >= 8
+warn BWV 1003: 1 movements bundled, expected >= 4
+warn BWV 1004: 2 movements bundled, expected >= 5
+warn BWV 1005: 1 movements bundled, expected >= 4
+warn BWV 1006: 2 movements bundled, expected >= 7
+warn BWV 1008: 0 movements bundled, expected >= 6
+warn BWV 1009: 0 movements bundled, expected >= 6
+warn BWV 1011: 2 movements bundled, expected >= 6
+warn BWV 1012: 0 movements bundled, expected >= 6
+     PARTIAL SET: coverage warnings above are expected until KernScores is reachable; see docs/solo/INVENTORY.md
+ok   28 solo bundles valid
+== PASS  (0 failures, 10 warnings)
+```
+
+Smoke test output (raw, `node tests/smoke_solo.mjs`, exit code 0):
+```
+PASS chorale 1 loads with answer slots
+PASS chorale 1 selected by default
+PASS chorale 1: palette visible
+PASS chorale 1: no console errors
+PASS s:bwv1002-2: SVG rendered with notes (380 note groups)
+PASS s:bwv1002-2: slots and palette hidden
+PASS s:bwv1002-2: no console errors
+PASS s:bwv1002-2: >=1 note highlighted after 2 s of playback
+PASS s:bwv1004-4: SVG rendered with notes (910 note groups)
+PASS s:bwv1004-4: slots and palette hidden
+PASS s:bwv1004-4: no console errors
+PASS s:bwv1004-4: >=1 note highlighted after 2 s of playback
+PASS s:bwv1007-1: SVG rendered with notes (657 note groups)
+PASS s:bwv1007-1: slots and palette hidden
+PASS s:bwv1007-1: no console errors
+PASS s:bwv1007-1: >=1 note highlighted after 2 s of playback
+PASS back to chorale 1: slots visible and populated
+PASS back to chorale 1: palette visible
+PASS back to chorale 1: no console errors
+PASS P4 chorale: transform preview present mid-gesture
+PASS P4 chorale: slot count unchanged after zoom commit
+PASS P4 chorale: slot x strictly increasing after zoom commit
+PASS P4 chorale: zoom persisted to localStorage (got 1.12)
+PASS P4 chorale: no console errors
+PASS P4 chorale: zoom restored after reload (--zoom=1.12)
+PASS P4 chorale: slots strictly increasing after reload
+PASS P4 chorale reload: no console errors
+PASS P4 spacing: input event previews via transform (got "translate(-544.7px, 0px) scale(1.33571, ")
+PASS P4 spacing: preview makes zero Verovio calls
+PASS P4 spacing: change event commits and removes transform
+PASS P4 spacing: commit re-rendered via Verovio
+PASS P4 spacing: slots still strictly increasing after commit
+PASS P4 spacing: no console errors
+PASS P4 solo: >=1 note highlighted after zoom during playback
+PASS P4 solo: playback still running after zoom commit
+PASS P4 solo: no console errors
+```
+
+Waiting for review.
+
 ## Review of P2 + P3 — 2026-11-02 (Claude session)
 Verdict: **P2 and P3 accepted.** Gate PASS and smoke 19/19 reproduced
 independently; screenshots checked on desktop and phone width. P2 found and

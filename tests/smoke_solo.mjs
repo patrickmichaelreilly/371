@@ -115,6 +115,102 @@ try {
   check('back to chorale 1: palette visible',
         await page.locator('#palette').isVisible());
   check('back to chorale 1: no console errors', errors.length === 0);
+  errors.length = 0;
+
+  /* --- P4: Ctrl+wheel zoom over the chorale score --- */
+  const ctrlWheel = dy => page.evaluate(dy => {
+    document.getElementById('scroller').dispatchEvent(
+      new WheelEvent('wheel', {deltaY: dy, ctrlKey: true,
+                               clientX: 400, clientY: 300,
+                               bubbles: true, cancelable: true}));
+  }, dy);
+  const slotXs = () => page.evaluate(() =>
+    [...document.querySelectorAll('#slots .slot')].map(s => +s.dataset.x));
+  const xsBefore = await slotXs();
+  const countBefore = xsBefore.length;
+  await ctrlWheel(-240);                    /* one wheel tick: zoom 1 -> 1.12 */
+  await page.waitForTimeout(150);           /* inside the commit debounce */
+  const tfMid = await page.evaluate(
+    () => document.getElementById('staff').style.transform);
+  check('P4 chorale: transform preview present mid-gesture',
+        /scale/.test(tfMid) && tfMid !== '');
+  await page.waitForTimeout(600);           /* debounce 220 ms + re-render */
+  const xsAfter = await slotXs();
+  check('P4 chorale: slot count unchanged after zoom commit',
+        xsAfter.length === countBefore);
+  check('P4 chorale: slot x strictly increasing after zoom commit',
+        xsAfter.every((x, i) => i === 0 || x > xsAfter[i - 1]));
+  const zStored = await page.evaluate(
+    () => localStorage.getItem('zoom:chorale'));
+  check('P4 chorale: zoom persisted to localStorage (got ' + zStored + ')',
+        parseFloat(zStored) > 1 && parseFloat(zStored) <= 3);
+  check('P4 chorale: no console errors', errors.length === 0);
+  errors.length = 0;
+
+  /* --- P4: zoom persists across reload --- */
+  await page.reload({waitUntil: 'domcontentloaded'});
+  await page.waitForSelector('#slots .slot', {timeout: 30000});
+  const zVar = await page.evaluate(
+    () => document.getElementById('staff').style.getPropertyValue('--zoom'));
+  check('P4 chorale: zoom restored after reload (--zoom=' + zVar + ')',
+        parseFloat(zVar) > 1);
+  const xsReload = await slotXs();
+  check('P4 chorale: slots strictly increasing after reload',
+        xsReload.length === countBefore
+        && xsReload.every((x, i) => i === 0 || x > xsReload[i - 1]));
+  check('P4 chorale reload: no console errors', errors.length === 0);
+  errors.length = 0;
+
+  /* --- P4: spacing slider — preview without Verovio, commit removes it --- */
+  const vrvBefore = await page.evaluate(() => window.__vrv || 0);
+  await page.evaluate(() => {
+    const s = document.getElementById('space');
+    s.value = '85';
+    s.dispatchEvent(new Event('input', {bubbles: true}));
+  });
+  const tfSpace = await page.evaluate(
+    () => document.getElementById('staff').style.transform);
+  const vrvDuring = await page.evaluate(() => window.__vrv || 0);
+  check('P4 spacing: input event previews via transform (got "' +
+        tfSpace.slice(0, 40) + '")', /scale/.test(tfSpace));
+  check('P4 spacing: preview makes zero Verovio calls',
+        vrvDuring === vrvBefore);
+  await page.evaluate(() => {
+    document.getElementById('space').dispatchEvent(
+      new Event('change', {bubbles: true}));
+  });
+  await page.waitForTimeout(700);
+  const tfAfter = await page.evaluate(
+    () => document.getElementById('staff').style.transform);
+  const vrvAfter = await page.evaluate(() => window.__vrv || 0);
+  check('P4 spacing: change event commits and removes transform',
+        tfAfter === '');
+  check('P4 spacing: commit re-rendered via Verovio',
+        vrvAfter > vrvDuring);
+  const xsSpace = await slotXs();
+  check('P4 spacing: slots still strictly increasing after commit',
+        xsSpace.length === countBefore
+        && xsSpace.every((x, i) => i === 0 || x > xsSpace[i - 1]));
+  check('P4 spacing: no console errors', errors.length === 0);
+  errors.length = 0;
+
+  /* --- P4: solo zoom during playback — highlight keeps running --- */
+  await page.selectOption('#pick', 's:bwv1007-1');
+  await page.waitForSelector('#staff svg g.note', {timeout: 60000});
+  await page.click('#playbtn');
+  await page.waitForTimeout(300);
+  await ctrlWheel(-240);
+  await ctrlWheel(-240);                    /* zoom 1 -> ~1.25 */
+  await page.waitForTimeout(2000);
+  const hlSolo = await page.locator('#staff svg g.playing').count();
+  const stillOn = await page.evaluate(
+    () => document.getElementById('playbtn').classList.contains('on'));
+  check('P4 solo: >=1 note highlighted after zoom during playback',
+        hlSolo > 0);
+  check('P4 solo: playback still running after zoom commit', stillOn);
+  await page.click('#playbtn');             /* stop */
+  await page.waitForTimeout(300);
+  check('P4 solo: no console errors', errors.length === 0);
 } finally {
   await browser.close();
   srv.kill();
