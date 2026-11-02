@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#F6F1E4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -62,7 +62,9 @@
   body.solo #content{height:auto;min-height:100%}
   body.solo #staff{padding:10px 10px 60px}
   body.solo #staff svg{width:100%;height:auto;max-width:1100px;margin:0 auto}
-  #staff svg g.playing,#staff svg g.playing *{color:var(--red)}
+  /* Verovio strokes use currentColor but glyphs (noteheads) are filled with
+     no fill set, so they default to black: highlight needs fill as well */
+  #staff svg g.playing,#staff svg g.playing *{color:var(--red);fill:var(--red)}
 
   #slots{position:absolute;left:0;right:0;height:74px;top:calc(min(46vh,300px) + 14px)}
   .slot{position:absolute;transform:translateX(-50%);min-width:36px;height:64px;
@@ -469,7 +471,7 @@ function soloOptions(){
   /* zoom: smaller pageWidth = fewer units across the same css width =
      bigger staff on screen (on-screen staff px ≈ staffPx·zoom) */
   return {breaks:'auto',adjustPageHeight:true,adjustPageWidth:false,
-          pageWidth:Math.max(2000,Math.round(127*W/staffPx/zoom)),scale:100,
+          pageWidth:Math.max(500,Math.round(127*W/staffPx/zoom)),scale:100,
           footer:'none',header:'none',
           spacingLinear:lin,spacingNonLinear:nonlin};
 }
@@ -732,12 +734,17 @@ function endPinch(ev){
   }
 }
 scroller.addEventListener('pointerup',endPinch);
+/* iOS Safari ignores user-scalable=no and runs its own page zoom alongside
+   ours; its proprietary gesture events let us cancel it over the score */
+for(const t of ['gesturestart','gesturechange','gestureend'])
+  scroller.addEventListener(t,ev=>ev.preventDefault(),{passive:false});
 scroller.addEventListener('pointercancel',endPinch);
 
 /* desktop zoom: Ctrl/Cmd + wheel (a trackpad pinch arrives the same way);
    preventDefault ONLY here, so page zoom keeps working elsewhere */
+const coarse=matchMedia('(pointer:coarse)').matches;
 scroller.addEventListener('wheel',ev=>{
-  if(!DATA||!(ev.ctrlKey||ev.metaKey))return;
+  if(coarse||!DATA||!(ev.ctrlKey||ev.metaKey))return;   /* touch: pinch only */
   ev.preventDefault();
   zoom=Math.min(3,Math.max(.5,zoom*(ev.deltaY<0?1.12:1/1.12)));
   previewXform(ev.clientX,ev.clientY,zoom,zoom);
