@@ -55,6 +55,15 @@
   #cursor{position:absolute;top:0;width:2px;background:var(--amber);
           box-shadow:0 0 0 6px var(--amber);pointer-events:none;display:none}
 
+  /* ---- solo (listen-and-read) mode: body.solo ---- */
+  body.solo #slots,body.solo #palette,body.solo #progspan,
+  body.solo #resetbtn{display:none}
+  body.solo #scroller{overflow:auto;touch-action:auto}
+  body.solo #content{height:auto;min-height:100%}
+  body.solo #staff{padding:10px 10px 60px}
+  body.solo #staff svg{width:100%;height:auto;max-width:1100px;margin:0 auto}
+  #staff svg g.playing,#staff svg g.playing *{color:var(--red)}
+
   #slots{position:absolute;left:0;right:0;height:74px;top:calc(min(46vh,300px) + 14px)}
   .slot{position:absolute;transform:translateX(-50%);min-width:36px;height:64px;
         display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
@@ -115,11 +124,11 @@
 <body>
 <header>
   <div id="pickwrap">
-    <select id="pick" aria-label="choose chorale"></select>
+    <select id="pick" aria-label="choose chorale or movement"></select>
   </div>
   <div class="meta">
     <span>Key <b id="mkey">–</b></span>
-    <span>Progress <b id="mprog">0/0</b></span>
+    <span id="progspan">Progress <b id="mprog">0/0</b></span>
     <span><button id="resetbtn">reset</button></span>
     <span style="margin-left:auto;display:flex;align-items:center;gap:5px">Spacing
       <input id="space" type="range" min="0" max="100" value="50">
@@ -270,8 +279,7 @@ const scroller=document.getElementById('scroller'),
       pick=document.getElementById('pick'),
       spaceEl=document.getElementById('space');
 
-async function fetchBundle(riem){
-  const url=`chorales/${String(riem).padStart(3,'0')}.json.gz`;
+async function fetchBundle(url){
   const r=await fetch(url);
   if(!r.ok) throw new Error(`${url}: ${r.status}`);
   const buf=await r.arrayBuffer();
@@ -316,6 +324,7 @@ function setup(data){
   loadToken++;
   stopPlayback(); stopDrone(true);
   DATA=data; sel=-1; attempts={}; results={};
+  document.body.classList.remove('solo');
   cursor.style.display='none';
   /* pre-parse answers; keyChange = first event of a new key region */
   let prevKey=null;
@@ -388,14 +397,165 @@ function markDone(riem){
 async function loadChorale(riem){
   try{
     loadmsg.textContent=`Loading chorale ${riem}…`; loadmsg.style.display='';
-    const data=await fetchBundle(riem);
+    const data=await fetchBundle(`chorales/${String(riem).padStart(3,'0')}.json.gz`);
     setup(data);
     localStorage.setItem('riem',riem);
+    localStorage.setItem('lastsel',String(riem));
     if(pick.value!==String(riem)) pick.value=String(riem);
   }catch(err){
     msg(`Could not load chorale ${riem} — ${err.message}`,'bad');
   }
 }
+
+/* ================= solo (listen-and-read) =================
+   Bundles carry MEI (kind:'solo', events:[] — no answer key exists, so
+   the analysis game is hidden). Playback timing comes ONLY from the JS
+   toolkit's own timemap: Verovio qstamps drift from the stored parts
+   offsets wherever a pickup/partial measure exists (HANDOFF P2 step 4).
+   Layout is paged: systems wrap at pageWidth, pages stack, vertical
+   scroll. NOTE: getMIDIValuesForElement returns {} until
+   renderToTimemap() has run — buildSoloPlayback() orders that. */
+let soloNotes=[],soloById={},soloStartQ=0;
+const hlMap=new Map();let hlIdx=0;
+function isSolo(){return !!DATA&&DATA.kind==='solo';}
+
+async function loadSolo(id){
+  try{
+    loadmsg.textContent='Loading movement…';loadmsg.style.display='';
+    const data=await fetchBundle(`solo/${id}.json.gz`);
+    setupSolo(data);
+    localStorage.setItem('lastsel','s:'+id);
+    if(pick.value!==('s:'+id))pick.value='s:'+id;
+  }catch(err){
+    msg(`Could not load movement ${id} — ${err.message}`,'bad');
+  }
+}
+
+function setupSolo(data){
+  loadToken++;
+  stopPlayback();stopDrone(true);
+  DATA=data;sel=-1;attempts={};results={};
+  document.body.classList.add('solo');
+  cursor.style.display='none';
+  slotsEl.innerHTML='';slots=[];chosenIds=[];
+  const k=data.key||'';
+  document.getElementById('mkey').textContent=
+    k?k.replace('-','♭')+(k[0]===k[0].toLowerCase()?' minor':' major'):'–';
+  document.getElementById('mprog').textContent='–';
+  resetState();
+  staffEl.innerHTML='';scroller.scrollTop=0;
+  msg('Press play, or tap a note to start from there.');
+  renderSolo(true);
+}
+
+/* page layout: staff px on screen ≈ 1.44·W·scale/pageWidth in Verovio's
+   viewBox units (measured, 6.2.x) — pick pageWidth for a readable staff */
+function soloOptions(){
+  const [lin,nonlin]=spacingFor(+spaceEl.value/100);
+  const W=Math.min(Math.max(300,scroller.clientWidth-20),1100);
+  const staffPx=Math.min(48,Math.max(21,W/17));
+  return {breaks:'auto',adjustPageHeight:true,adjustPageWidth:false,
+          pageWidth:Math.round(144*W/staffPx),scale:100,
+          footer:'none',header:'none',
+          spacingLinear:lin,spacingNonLinear:nonlin};
+}
+
+async function renderSolo(reload){
+  const tk=await toolkit(),token=loadToken;
+  tk.setOptions(soloOptions());
+  if(reload&&!tk.loadData(DATA.mei)){
+    if(token===loadToken){
+      loadmsg.textContent='Could not engrave this movement.';
+      PLAY_NOTES=[];PIECE_END=0;clearSoloHL();
+    }
+    return;
+  }
+  if(!reload)tk.redoLayout();
+  if(token!==loadToken)return;
+  const keep=scroller.scrollTop,pages=[],n=tk.getPageCount();
+  for(let p=1;p<=n;p++){
+    if(token!==loadToken)return;
+    pages.push(tk.renderToSVG(p));
+  }
+  if(token!==loadToken)return;
+  staffEl.innerHTML=pages.join('');
+  scroller.scrollTop=keep;
+  loadmsg.style.display='none';
+  if(reload)buildSoloPlayback(tk);
+}
+
+/* playback source of truth: the toolkit timemap of the loaded MEI */
+function buildSoloPlayback(tk){
+  let tm=tk.renderToTimemap();
+  if(typeof tm==='string')tm=JSON.parse(tm);
+  const start={},end={};
+  for(const e of tm){
+    const q=+e.qstamp||0;
+    for(const id of (e.on||[]))start[id]=q;
+    for(const id of (e.off||[]))end[id]=q;
+  }
+  soloNotes=[];soloById={};
+  for(const id of Object.keys(start)){
+    const mv=tk.getMIDIValuesForElement(id)||{};
+    const n={id,start:start[id],end:(id in end)?end[id]:start[id],midi:mv.pitch};
+    soloNotes.push(n);soloById[id]=n;
+  }
+  soloNotes.sort((a,b)=>a.start-b.start||a.end-b.end);
+  ALL_NOTES=[];
+  PLAY_NOTES=soloNotes.filter(n=>n.midi>0&&n.end>n.start)
+    .map(n=>({id:n.id,midi:n.midi,offset:n.start,dur:n.end-n.start}));
+  PERF_SEGS=[{o0:0,o1:Infinity,p0:0,p1:Infinity}];   /* no fermata map */
+  PIECE_END=PLAY_NOTES.reduce((m,n)=>Math.max(m,n.offset+n.dur),0);
+  clearSoloHL();
+}
+
+function clearSoloHL(){
+  for(const id of hlMap.keys()){
+    const el=document.getElementById(id);
+    if(el)el.classList.remove('playing');
+  }
+  hlMap.clear();hlIdx=0;
+}
+
+function soloRaf(q){
+  while(hlIdx<PLAY_NOTES.length&&PLAY_NOTES[hlIdx].offset<=q){
+    const n=PLAY_NOTES[hlIdx++];
+    if(n.end>q){
+      hlMap.set(n.id,n.end);
+      const el=document.getElementById(n.id);
+      if(el)el.classList.add('playing');
+    }
+  }
+  for(const [id,end] of hlMap){
+    if(end<=q){
+      hlMap.delete(id);
+      const el=document.getElementById(id);
+      if(el)el.classList.remove('playing');
+    }
+  }
+  for(const id of hlMap.keys()){soloKeepInView(id);break;}
+}
+function soloKeepInView(id){
+  const el=document.getElementById(id);if(!el)return;
+  const r=el.getBoundingClientRect(),s=scroller.getBoundingClientRect();
+  const m=s.height*.18;
+  if(r.top-s.top<m)scroller.scrollTop+=r.top-s.top-m;
+  else if(s.bottom-r.bottom<m)scroller.scrollTop+=m-(s.bottom-r.bottom);
+}
+
+/* tap a note: playback starts from it (a drag-scroll is not a tap) */
+let tapX=0,tapY=0;
+staffEl.addEventListener('pointerdown',ev=>{tapX=ev.clientX;tapY=ev.clientY;});
+staffEl.addEventListener('click',ev=>{
+  if(!isSolo())return;
+  if(Math.abs(ev.clientX-tapX)>10||Math.abs(ev.clientY-tapY)>10)return;
+  const g=ev.target.closest?ev.target.closest('g.note'):null;
+  const n=g&&g.id&&soloById[g.id];
+  if(!n)return;
+  if(playing)stopPlayback();
+  soloStartQ=n.start;
+  startPlayback();
+});
 
 async function init(){
   let manifest=[];
@@ -412,7 +572,29 @@ async function init(){
     o.textContent=`${done?'✓ ':''}${m.riem} · ${m.title||''}`;
     pick.appendChild(o);
   });
-  pick.onchange=()=>loadChorale(+pick.value);
+  /* solo library: two groups appended after the chorale options */
+  try{
+    const solo=await (await fetch('solo/index.json')).json();
+    const gv=document.createElement('optgroup');gv.label='Violin — Sonatas & Partitas';
+    const gc=document.createElement('optgroup');gc.label='Cello Suites';
+    solo.forEach(m=>{
+      const o=document.createElement('option');
+      o.value='s:'+m.id;
+      o.textContent=`BWV ${m.bwv} · ${m.movement}`;
+      (m.set==='cello'?gc:gv).appendChild(o);
+    });
+    pick.appendChild(gv);pick.appendChild(gc);
+  }catch(e){console.warn('solo/index.json unavailable — solo library hidden');}
+  pick.onchange=()=>{
+    const v=pick.value;
+    if(v.startsWith('s:'))loadSolo(v.slice(2));else loadChorale(+v);
+  };
+  const lastSel=localStorage.getItem('lastsel')||'';
+  if(lastSel.startsWith('s:')&&pick.querySelector(`option[value="${lastSel}"]`)){
+    pick.value=lastSel;
+    await loadSolo(lastSel.slice(2));
+    return;
+  }
   const last=+localStorage.getItem('riem')||manifest[0].riem;
   const start=manifest.some(m=>m.riem===last)?last:manifest[0].riem;
   pick.value=String(start);
@@ -424,6 +606,7 @@ async function init(){
    (never the whole note group — lyrics/extenders skew it; pitfall 2). */
 function layout(){
   if(!DATA) return;
+  if(isSolo()){content.style.width='';return;}
   const svg=staffEl.querySelector('svg');
   if(!svg) return;
   const cRect=content.getBoundingClientRect(), sRect=svg.getBoundingClientRect();
@@ -452,6 +635,7 @@ spaceEl.addEventListener('input',()=>{
   spaceTimer=setTimeout(()=>{
     if(!DATA) return;
     localStorage.setItem('space',spaceEl.value);
+    if(isSolo()){renderSolo(false);return;}
     renderScore(false).then(()=>{
       if(sel>=0)slots[sel].scrollIntoView({inline:'center',block:'nearest'});
     });
@@ -464,7 +648,7 @@ function firstUnanswered(){
   return DATA.events.findIndex((_,j)=>!(j in results));
 }
 document.getElementById('resetbtn').onclick=()=>{
-  if(!DATA) return;
+  if(!DATA||isSolo()) return;
   localStorage.removeItem('prog:'+DATA.riemenschneider);
   const o=pick.querySelector(`option[value="${DATA.riemenschneider}"]`);
   if(o) o.textContent=o.textContent.replace(/^✓ /,'');
@@ -730,11 +914,14 @@ function playheadX(q){
 function raf(){
   if(!playing)return;
   const q=anchorQ+(AC.currentTime-anchorT)/curSpq;   /* performance quarters */
-  const x=playheadX(invPerfQ(q));                    /* -> notated quarters */
-  cursor.style.display='block';
-  cursor.style.left=x+'px';
-  cursor.style.height=slotsEl.offsetTop+'px';
-  if(!userHold)scroller.scrollLeft=x-scroller.clientWidth*.38;
+  if(isSolo()){soloRaf(q);}
+  else{
+    const x=playheadX(invPerfQ(q));                  /* -> notated quarters */
+    cursor.style.display='block';
+    cursor.style.left=x+'px';
+    cursor.style.height=slotsEl.offsetTop+'px';
+    if(!userHold)scroller.scrollLeft=x-scroller.clientWidth*.38;
+  }
   rafId=requestAnimationFrame(raf);
 }
 function startPlayback(){
@@ -744,7 +931,7 @@ function startPlayback(){
   playMaster=AC.createGain();playMaster.gain.value=.9;
   const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=2400;
   playMaster.connect(lp).connect(AC.destination);
-  const startQ=sel>=0?perfQ(DATA.events[sel].offset):0;
+  const startQ=isSolo()?perfQ(soloStartQ):(sel>=0?perfQ(DATA.events[sel].offset):0);
   anchorQ=startQ;anchorT=AC.currentTime+.06;
   curSpq=60/+tempoEl.value;phIdx=0;
   schedIdx=PLAY_NOTES.findIndex(n=>n.offset>=startQ-1e-6);
@@ -765,7 +952,8 @@ function stopPlayback(){
     playMaster=null;
   }
   playBtn.innerHTML='&#9654;';playBtn.classList.remove('on');
-  if(sel>=0&&slots[sel])cursor.style.left=slots[sel].dataset.x+'px';
+  if(isSolo()){clearSoloHL();}
+  else if(sel>=0&&slots[sel])cursor.style.left=slots[sel].dataset.x+'px';
   else cursor.style.display='none';
 }
 playBtn.onclick=()=>playing?stopPlayback():startPlayback();
